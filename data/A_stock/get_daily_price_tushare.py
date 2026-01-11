@@ -7,6 +7,7 @@ from typing import Dict, Optional
 
 import pandas as pd
 import tushare as ts
+import tushare.pro.client as client
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -128,8 +129,10 @@ def get_daily_price_a_stock(
         print("Error: TUSHARE_TOKEN not found")
         return None
 
-    ts.set_token(token)
-    pro = ts.pro_api()
+    # ts.set_token(token)
+    # pro = ts.pro_api()
+    client.DataApi._DataApi__http_url = "http://tushare.xyz:5000"
+    pro = ts.pro_api('33d1aba4ba8d602806253cdb63f0848be5606cfda8f1ba2c3bc36c43')
     
     # Set timeout for tushare API requests (increase to 120 seconds)
     if hasattr(pro, 'api') and hasattr(pro.api, 'timeout'):
@@ -319,8 +322,10 @@ def get_index_daily_data(
         print("Error: TUSHARE_TOKEN not found")
         return None
 
-    ts.set_token(token)
-    pro = ts.pro_api()
+    # ts.set_token(token)
+    # pro = ts.pro_api()
+    client.DataApi._DataApi__http_url = "http://tushare.xyz:5000"
+    pro = ts.pro_api('33d1aba4ba8d602806253cdb63f0848be5606cfda8f1ba2c3bc36c43')
     
     # Set timeout for tushare API requests (increase to 120 seconds)
     if hasattr(pro, 'api') and hasattr(pro.api, 'timeout'):

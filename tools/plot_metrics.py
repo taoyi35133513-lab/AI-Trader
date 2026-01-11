@@ -23,7 +23,7 @@ AGENT_MAPPING = {
     'claude-3.7-sonnet': 'Claude-3.7-Sonnet',
     'gpt-5': 'GPT-5',
     'qwen3-max': 'Qwen3-Max',
-    'gemini-2.5-flash': 'Gemini-2.5-Flash'
+    'gemini-2.5-flash': 'gemini-2.5-flash'
 }
 
 # Custom color palette for agents
@@ -33,7 +33,7 @@ AGENT_COLORS = {
     'Claude-3.7-Sonnet': '#45B7D1',  # Blue
     'GPT-5': '#96CEB4',              # Green
     'Qwen3-Max': '#FFEAA7',          # Yellow
-    'Gemini-2.5-Flash': '#DFE6E9'    # Gray
+    'gemini-2.5-flash': '#DFE6E9'    # Gray
 }
 
 

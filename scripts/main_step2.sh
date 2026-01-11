@@ -6,7 +6,16 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 cd "$PROJECT_ROOT"
 
-echo "🔧 Now starting MCP services..."
+# Check and activate virtual environment
+if [ -d ".venv" ]; then
+    echo "� Activating virtual environment..."
+    source .venv/bin/activate
+else
+    echo "❌ Error: Virtual environment .venv not found in project root."
+    exit 1
+fi
+
+echo "�🔧 Now starting MCP services..."
 cd agent_tools
-python start_mcp_services.py
+python3 start_mcp_services.py
 cd ..

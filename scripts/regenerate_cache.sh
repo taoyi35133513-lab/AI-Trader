@@ -15,6 +15,15 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 cd "$PROJECT_ROOT"
 
+# Check and activate virtual environment
+if [ -d ".venv" ]; then
+    echo "🔌 Activating virtual environment..."
+    source .venv/bin/activate
+else
+    echo "❌ Error: Virtual environment .venv not found in project root."
+    exit 1
+fi
+
 # Try to find Python with yaml module
 if command -v ~/miniconda3/bin/python3 &> /dev/null && ~/miniconda3/bin/python3 -c "import yaml" &> /dev/null; then
     PYTHON=~/miniconda3/bin/python3

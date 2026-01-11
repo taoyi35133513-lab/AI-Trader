@@ -3,7 +3,7 @@
   "market": "cn",
   "date_range": {
     "init_date": "2025-10-09 8:30:00",
-    "end_date": "2025-10-11 16:00:00"
+    "end_date": "2026-02-04 16:00:00"
   },
   "models": [
     {
@@ -28,9 +28,9 @@
     },
     {
       "name": "gemini-2.5-flash",
-      "basemodel": "google/gemini-2.5-flash",
+      "basemodel": "gemini-2.5-flash",
       "signature": "gemini-2.5-flash-astock-hour",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "gpt-5",
@@ -48,7 +48,7 @@
       "name": "MiniMax-M2",
       "basemodel": "minimax/minimax-m2",
       "signature": "MiniMax-M2-astock-hour",
-      "enabled": true
+      "enabled": false
     }
   ],
   "agent_config": {

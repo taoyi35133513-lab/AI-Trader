@@ -3,7 +3,7 @@
   "market": "cn",
   "date_range": {
     "init_date": "2025-10-01",
-    "end_date": "2025-10-29"
+    "end_date": "2026-02-04"
   },
   "models": [
     {
@@ -26,9 +26,9 @@
     },
     {
       "name": "gemini-2.5-flash",
-      "basemodel": "google/gemini-2.5-flash",
+      "basemodel": "gemini-2.5-flash",
       "signature": "gemini-2.5-flash",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "gpt-5",
@@ -40,7 +40,7 @@
       "name": "gpt-4.1",
       "basemodel": "openai/gpt-4.1",
       "signature": "gpt-4.1",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "MiniMax-M2",
