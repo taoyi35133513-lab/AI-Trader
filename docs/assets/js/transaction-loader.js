@@ -91,7 +91,9 @@ class TransactionLoader {
         try {
             const marketConfig = window.configLoader.getMarketConfig(market);
             const agentDataDir = marketConfig ? marketConfig.data_dir : 'agent_data';
-            const logPath = `data/${agentDataDir}/${agentFolder}/log/${date}/log.jsonl`;
+            // Sanitize date for Windows compatibility (replace : with -)
+            const safeDate = date.replace(/:/g, '-');
+            const logPath = `data/${agentDataDir}/${agentFolder}/log/${safeDate}/log.jsonl`;
             const response = await fetch(logPath);
 
             // If log file doesn't exist, return null (no reasoning available)

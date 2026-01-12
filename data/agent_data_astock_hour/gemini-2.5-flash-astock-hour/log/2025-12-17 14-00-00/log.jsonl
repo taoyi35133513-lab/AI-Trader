@@ -1,0 +1,2 @@
+{"timestamp": "2025-12-23T10:07:00.132718", "signature": "gemini-2.5-flash-astock-hour", "new_messages": [{"role": "user", "content": "请分析并更新今日（2025-12-17 14:00:00）的持仓。"}]}
+{"timestamp": "2025-12-23T10:07:35.217195", "signature": "gemini-2.5-flash-astock-hour", "new_messages": [{"role": "assistant", "content": "<FINISH_SIGNAL>"}]}

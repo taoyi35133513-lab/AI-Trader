@@ -160,11 +160,14 @@ function updateMetrics(data) {
 
 // Update holdings table
 async function updateHoldingsTable(agentName) {
+    console.log(`[updateHoldingsTable] Loading holdings for: ${agentName}`);
     const holdings = dataLoader.getCurrentHoldings(agentName);
+    console.log(`[updateHoldingsTable] Holdings:`, holdings);
     const tableBody = document.getElementById('holdingsTableBody');
     tableBody.innerHTML = '';
 
     if (!holdings) {
+        console.log(`[updateHoldingsTable] No holdings found, returning early`);
         return;
     }
 
