@@ -11,6 +11,77 @@ class DataLoader {
         this.cacheManager = new CacheManager(); // Initialize cache manager
     }
 
+    inferProviderKey(agentName) {
+        const normalized = String(agentName || '').toLowerCase();
+        if (normalized.startsWith('gemini')) return 'google';
+        if (normalized.startsWith('gpt')) return 'openai';
+        if (normalized.startsWith('claude')) return 'anthropic';
+        if (normalized.startsWith('deepseek')) return 'deepseek';
+        if (normalized.startsWith('qwen')) return 'qwen';
+        if (normalized.startsWith('minimax')) return 'minimax';
+        if (normalized.startsWith('glm')) return 'zhipu';
+        return 'default';
+    }
+
+    inferDisplayName(agentName) {
+        const raw = String(agentName || '');
+        const normalized = raw.toLowerCase();
+        const base = raw.replace(/-astock-hour$/i, '');
+        if (normalized.startsWith('gemini-')) {
+            const parts = base.split('-').slice(1);
+            const out = parts.map(p => (p.length === 1 ? p.toUpperCase() : p[0].toUpperCase() + p.slice(1)));
+            return `Gemini ${out.join(' ')}`.trim();
+        }
+        if (normalized.startsWith('gpt-')) {
+            // GPT-4-turbo -> GPT-4 Turbo, GPT-4.1 -> GPT-4.1
+            const parts = base.split('-');
+            parts[0] = 'GPT';
+            // Keep version numbers (e.g., "4", "4.1") as-is, capitalize words (e.g., "turbo" -> "Turbo")
+            for (let i = 1; i < parts.length; i++) {
+                const p = parts[i];
+                if (!/^[\d.]+$/.test(p)) {
+                    parts[i] = p[0].toUpperCase() + p.slice(1).toLowerCase();
+                }
+            }
+            return parts.join('-').replace(/-(?=[A-Z])/g, ' ');
+        }
+        if (normalized.startsWith('claude-')) return raw.replace(/^claude-/i, 'Claude ');
+        if (normalized.startsWith('deepseek-')) return raw.replace(/^deepseek-/i, 'DeepSeek ');
+        if (normalized.startsWith('qwen')) return raw.replace(/^qwen/i, 'Qwen');
+        if (normalized.startsWith('minimax')) return raw.replace(/^minimax/i, 'MiniMax');
+        if (normalized.startsWith('glm')) return raw.replace(/^glm/i, 'GLM');
+        return raw;
+    }
+
+    inferIconPath(agentName) {
+        const provider = this.inferProviderKey(agentName);
+        const icons = {
+            google: './figs/google.svg',
+            openai: './figs/openai.svg',
+            anthropic: './figs/claude-color.svg',
+            deepseek: './figs/deepseek.svg',
+            qwen: './figs/qwen.svg',
+            minimax: './figs/minimax.svg',
+            zhipu: './figs/zhipu-color.svg',
+            default: './figs/stock.svg'
+        };
+        return icons[provider] || './figs/stock.svg';
+    }
+
+    inferBrandColor(agentName) {
+        const provider = this.inferProviderKey(agentName);
+        const colors = {
+            google: '#00d4ff',
+            qwen: '#00ffcc',
+            deepseek: '#ff006e',
+            openai: '#ffbe0b',
+            anthropic: '#8338ec',
+            minimax: '#3a86ff',
+            zhipu: '#6610f2'
+        };
+        return colors[provider] || null;
+    }
+
     // Switch market between US stocks and A-shares
     setMarket(market) {
         this.currentMarket = market;
@@ -811,38 +882,14 @@ class DataLoader {
     getAgentDisplayName(agentName) {
         const displayName = window.configLoader.getDisplayName(agentName, this.currentMarket);
         if (displayName) return displayName;
-
-        // Fallback to legacy names
-        const names = {
-            'gemini-2.5-flash': 'Gemini-2.5-flash',
-            'qwen3-max': 'Qwen3-max',
-            'MiniMax-M2': 'MiniMax-M2',
-            'gpt-5': 'GPT-5',
-            'deepseek-chat-v3.1': 'DeepSeek-v3.1',
-            'claude-3.7-sonnet': 'Claude 3.7 Sonnet',
-            'QQQ Invesco': 'QQQ ETF',
-            'SSE 50 Index': 'SSE 50 Index'
-        };
-        return names[agentName] || agentName;
+        return this.inferDisplayName(agentName);
     }
 
     // Get icon for agent (SVG file path)
     getAgentIcon(agentName) {
         const icon = window.configLoader.getIcon(agentName, this.currentMarket);
         if (icon) return icon;
-
-        // Fallback to legacy icons
-        const icons = {
-            'gemini-2.5-flash': './figs/google.svg',
-            'qwen3-max': './figs/qwen.svg',
-            'MiniMax-M2': './figs/minimax.svg',
-            'gpt-5': './figs/openai.svg',
-            'claude-3.7-sonnet': './figs/claude-color.svg',
-            'deepseek-chat-v3.1': './figs/deepseek.svg',
-            'QQQ Invesco': './figs/stock.svg',
-            'SSE 50 Index': './figs/stock.svg'
-        };
-        return icons[agentName] || './figs/stock.svg';
+        return this.inferIconPath(agentName);
     }
 
     // Get agent name without version suffix for icon lookup
@@ -854,21 +901,8 @@ class DataLoader {
     // Get brand color for agent
     getAgentBrandColor(agentName) {
         const color = window.configLoader.getColor(agentName, this.currentMarket);
-        console.log(`[getAgentBrandColor] agentName: ${agentName}, market: ${this.currentMarket}, color: ${color}`);
         if (color) return color;
-
-        // Fallback to legacy colors
-        const colors = {
-            'gemini-2.5-flash': '#8A2BE2',
-            'qwen3-max': '#0066ff',
-            'MiniMax-M2': '#ff0000',
-            'gpt-5': '#10a37f',
-            'deepseek-chat-v3.1': '#4a90e2',
-            'claude-3.7-sonnet': '#cc785c',
-            'QQQ Invesco': '#ff6b00',
-            'SSE 50 Index': '#e74c3c'
-        };
-        return colors[agentName] || null;
+        return this.inferBrandColor(agentName);
     }
 
     // Get cache manager instance

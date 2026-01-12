@@ -34,14 +34,70 @@ async function loadDataAndRefresh() {
     }
 }
 
+// Update market buttons visibility based on enabled markets in config
+function updateMarketButtonsVisibility() {
+    const config = window.configLoader.config;
+    if (!config || !config.markets) return;
+
+    const usBtn = document.getElementById('usMarketBtn');
+    const cnBtn = document.getElementById('cnMarketBtn');
+    const granularityWrapper = document.getElementById('granularityWrapper');
+
+    // Check if US market is enabled
+    const usEnabled = config.markets.us && config.markets.us.enabled !== false;
+    // Check if any CN market is enabled (cn or cn_hour)
+    const cnEnabled = (config.markets.cn && config.markets.cn.enabled !== false) ||
+                      (config.markets.cn_hour && config.markets.cn_hour.enabled !== false);
+
+    // Show/hide US market button
+    if (usBtn) {
+        usBtn.style.display = usEnabled ? '' : 'none';
+    }
+
+    // Show/hide CN market button
+    if (cnBtn) {
+        cnBtn.style.display = cnEnabled ? '' : 'none';
+    }
+
+    // Check if only one granularity is enabled for CN
+    const cnDailyEnabled = config.markets.cn && config.markets.cn.enabled !== false;
+    const cnHourlyEnabled = config.markets.cn_hour && config.markets.cn_hour.enabled !== false;
+
+    // If only one CN granularity is enabled, hide the granularity wrapper
+    if (granularityWrapper) {
+        if (!cnEnabled || (cnDailyEnabled && !cnHourlyEnabled) || (!cnDailyEnabled && cnHourlyEnabled)) {
+            granularityWrapper.classList.add('hidden');
+        }
+    }
+
+    console.log(`Market buttons visibility - US: ${usEnabled}, CN: ${cnEnabled} (daily: ${cnDailyEnabled}, hourly: ${cnHourlyEnabled})`);
+}
+
 // Initialize the page
 async function init() {
     // Set up event listeners first
     setupEventListeners();
 
+    // Load config first to determine enabled markets
+    await window.configLoader.loadConfig();
+
+    // Get enabled markets and set initial market to first enabled one
+    const enabledMarkets = window.configLoader.getEnabledMarkets();
+    const enabledMarketIds = Object.keys(enabledMarkets);
+
+    if (enabledMarketIds.length > 0) {
+        // Set dataLoader to first enabled market
+        const firstEnabledMarket = enabledMarketIds[0];
+        dataLoader.setMarket(firstEnabledMarket);
+        console.log(`Initial market set to: ${firstEnabledMarket} (first enabled market)`);
+    }
+
+    // Update market buttons visibility based on config
+    updateMarketButtonsVisibility();
+
     // Load initial data
     await loadDataAndRefresh();
-    
+
     // Initialize UI state
     updateMarketUI();
 }

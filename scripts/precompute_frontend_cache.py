@@ -49,8 +49,11 @@ def get_data_version_hash(market_config):
 
 def load_config():
     """Load the YAML configuration file."""
-    config_path = Path(__file__).parent.parent / 'docs' / 'config.yaml'
-    with open(config_path, 'r') as f:
+    docs_dir = Path(__file__).parent.parent / 'docs'
+    generated = docs_dir / 'config.generated.yaml'
+    fallback = docs_dir / 'config.yaml'
+    config_path = generated if generated.exists() else fallback
+    with open(config_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
 
 

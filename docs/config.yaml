@@ -14,7 +14,7 @@ markets:
     icon: "🇺🇸"
     price_data_type: "individual"  # individual JSON files per stock
     time_granularity: "hourly"  # hourly timestamps with hour component
-    enabled: true
+    enabled: false
     agents:  # US market specific agents
       - folder: "gemini-2.5-flash"
         display_name: "Gemini 2.5 Flash"
@@ -64,32 +64,32 @@ markets:
         display_name: "Qwen3 Max"
         icon: "./figs/qwen.svg"
         color: "#00ffcc"
-        enabled: true
+        enabled: false
       - folder: "deepseek-chat-v3.1"
         display_name: "DeepSeek Chat v3.1"
         icon: "./figs/deepseek.svg"
         color: "#ff006e"
-        enabled: true
+        enabled: false
       - folder: "gpt-5"
         display_name: "GPT-5"
         icon: "./figs/openai.svg"
         color: "#ffbe0b"
-        enabled: true
+        enabled: false
       - folder: "claude-3.7-sonnet"
         display_name: "Claude 3.7 Sonnet"
         icon: "./figs/claude-color.svg"
         color: "#8338ec"
-        enabled: true
+        enabled: false
       - folder: "MiniMax-M2"
         display_name: "MiniMax M2"
         icon: "./figs/minimax.svg"
         color: "#3a86ff"
-        enabled: true
+        enabled: false
       - folder: "glm-4.6"
         display_name: "GLM 4.6"
         icon: "./figs/zhipu-color.svg"
         color: "#6610f2"
-        enabled: true
+        enabled: false
 
   cn_hour:
     name: "A-Shares (Hourly)"

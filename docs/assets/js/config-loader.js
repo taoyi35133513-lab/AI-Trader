@@ -4,7 +4,8 @@
 class ConfigLoader {
     constructor() {
         this.config = null;
-        this.configPath = './config.yaml';
+        this.configPath = './config.generated.yaml';
+        this.fallbackConfigPath = './config.yaml';
     }
 
     // Load the YAML configuration file
@@ -15,9 +16,13 @@ class ConfigLoader {
 
         try {
             console.log('Loading configuration from:', this.configPath);
-            const response = await fetch(this.configPath);
+            let response = await fetch(this.configPath);
             if (!response.ok) {
-                throw new Error(`Failed to load config: ${response.status}`);
+                console.log(`Primary config not found (${response.status}), fallback to: ${this.fallbackConfigPath}`);
+                response = await fetch(this.fallbackConfigPath);
+                if (!response.ok) {
+                    throw new Error(`Failed to load config: ${response.status}`);
+                }
             }
 
             const yamlText = await response.text();
@@ -36,7 +41,7 @@ class ConfigLoader {
         if (marketId) {
             const marketConfig = this.getMarketConfig(marketId);
             if (marketConfig && marketConfig.agents) {
-                return marketConfig.agents;
+                return marketConfig.agents.filter(agent => agent.enabled !== false);
             }
         }
 
