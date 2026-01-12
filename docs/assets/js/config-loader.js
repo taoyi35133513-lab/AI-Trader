@@ -191,15 +191,19 @@ class ConfigLoader {
 
     // Get all enabled markets
     getEnabledMarkets() {
+        console.log('[getEnabledMarkets] Config:', this.config);
         if (!this.config || !this.config.markets) {
+            console.log('[getEnabledMarkets] No config or markets found');
             return {};
         }
         const enabledMarkets = {};
         for (const [key, market] of Object.entries(this.config.markets)) {
+            console.log(`[getEnabledMarkets] Market ${key}: enabled=${market.enabled}`);
             if (market.enabled !== false) {
                 enabledMarkets[key] = market;
             }
         }
+        console.log('[getEnabledMarkets] Enabled markets:', Object.keys(enabledMarkets));
         return enabledMarkets;
     }
 }

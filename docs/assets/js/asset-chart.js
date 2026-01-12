@@ -159,31 +159,43 @@ function updateMarketButtonsVisibility() {
 
 // Initialize the page
 async function init() {
+    console.log('[init] Starting initialization...');
+
     // Set up event listeners first
     setupEventListeners();
 
     // Load config first to determine enabled markets
+    console.log('[init] Loading config...');
     await window.configLoader.loadConfig();
+    console.log('[init] Config loaded:', window.configLoader.config);
 
     // Get enabled markets and set initial market to first enabled one
     const enabledMarkets = window.configLoader.getEnabledMarkets();
     const enabledMarketIds = Object.keys(enabledMarkets);
+    console.log('[init] Enabled markets:', enabledMarketIds);
 
     if (enabledMarketIds.length > 0) {
         // Set dataLoader to first enabled market
         const firstEnabledMarket = enabledMarketIds[0];
         dataLoader.setMarket(firstEnabledMarket);
-        console.log(`Initial market set to: ${firstEnabledMarket} (first enabled market)`);
+        console.log(`[init] Initial market set to: ${firstEnabledMarket}`);
+    } else {
+        console.warn('[init] No enabled markets found!');
     }
 
     // Update market buttons visibility based on config
+    console.log('[init] Updating market buttons visibility...');
     updateMarketButtonsVisibility();
 
     // Load initial data
+    console.log('[init] Loading data...');
     await loadDataAndRefresh();
 
     // Initialize UI state
+    console.log('[init] Updating market UI...');
     updateMarketUI();
+
+    console.log('[init] Initialization complete. Current market:', dataLoader.getMarket());
 }
 
 // Update statistics cards

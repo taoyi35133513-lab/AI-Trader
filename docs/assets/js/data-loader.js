@@ -757,10 +757,12 @@ class DataLoader {
     // Load all agents data with caching
     async loadAllAgentsData() {
         const startTime = performance.now();
-        console.log('Starting to load all agents data...');
+        console.log(`[loadAllAgentsData] Starting for market: ${this.currentMarket}`);
 
         // Try to load from cache first
+        console.log(`[loadAllAgentsData] Loading cache for market: ${this.currentMarket}`);
         const cachedData = await this.cacheManager.loadCache(this.currentMarket);
+        console.log(`[loadAllAgentsData] Cache result:`, cachedData ? Object.keys(cachedData) : 'null');
 
         if (cachedData) {
             const loadTime = performance.now() - startTime;
