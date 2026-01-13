@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Portfolio Analysis - AI-Trader</title>
     <link rel="icon" type="image/svg+xml" href="figs/stock.svg">
-    <link rel="stylesheet" href="assets/css/styles.css?v=4.0">
+    <link rel="stylesheet" href="assets/css/styles.css?v=8.0">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
 </head>
@@ -81,7 +81,20 @@
         </section>
 
         <section class="holdings-section">
-            <h3>Current Holdings</h3>
+            <div class="section-header">
+                <h3>Holdings</h3>
+                <div class="filter-controls">
+                    <div class="date-picker-box">
+                        <label for="holdingsDate">Date:</label>
+                        <input type="date" id="holdingsDate" class="date-input">
+                        <button id="holdingsDateReset" class="date-reset-btn" title="Reset to latest">×</button>
+                    </div>
+                    <div class="search-box">
+                        <input type="text" id="holdingsSearch" class="search-input" placeholder="Search symbol...">
+                        <span class="search-icon">🔍</span>
+                    </div>
+                </div>
+            </div>
             <div class="holdings-scroll-wrapper">
                 <div class="holdings-table-container">
                     <table class="holdings-table">
@@ -103,7 +116,22 @@
         </section>
 
         <section class="trade-history-section">
-            <h3>Recent Trade Activity</h3>
+            <div class="section-header">
+                <h3>Trade Activity</h3>
+                <div class="filter-controls">
+                    <div class="date-range-box">
+                        <label>Date Range:</label>
+                        <input type="date" id="tradeStartDate" class="date-input" title="Start date">
+                        <span class="date-separator">-</span>
+                        <input type="date" id="tradeEndDate" class="date-input" title="End date">
+                        <button id="tradeDateReset" class="date-reset-btn" title="Reset dates">×</button>
+                    </div>
+                    <div class="search-box">
+                        <input type="text" id="tradeSearch" class="search-input" placeholder="Search symbol...">
+                        <span class="search-icon">🔍</span>
+                    </div>
+                </div>
+            </div>
             <div class="trade-timeline" id="tradeTimeline">
                 <!-- Populated by JavaScript -->
             </div>
@@ -126,6 +154,6 @@
     <script src="assets/js/config-loader.js?v=14.0"></script>
     <script src="assets/js/cache-manager.js?v=3.0"></script>
     <script src="assets/js/data-loader.js?v=14.0"></script>
-    <script src="assets/js/portfolio.js?v=8.0"></script>
+    <script src="assets/js/portfolio.js?v=10.0"></script>
 </body>
 </html>

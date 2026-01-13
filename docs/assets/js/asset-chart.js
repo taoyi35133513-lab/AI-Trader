@@ -923,32 +923,173 @@ async function createLeaderboard() {
 
 // Create action flow with pagination
 let actionFlowState = {
-    allTransactions: [],
+    allTransactions: [],      // All unfiltered transactions
+    filteredTransactions: [], // Filtered transactions to display
     loadedCount: 0,
     pageSize: 20,
     maxTransactions: 100,
     isLoading: false,
-    container: null
+    isFiltering: false,       // Flag to disable animations during filtering
+    container: null,
+    // Filter state
+    searchQuery: '',
+    startDate: null,
+    endDate: null
 };
 
 async function createActionFlow() {
     // Load all transactions
     await window.transactionLoader.loadAllTransactions();
-    actionFlowState.allTransactions = window.transactionLoader.getMostRecentTransactions(100);
+    actionFlowState.allTransactions = window.transactionLoader.getMostRecentTransactions(500); // Load more for filtering
     actionFlowState.container = document.getElementById('actionList');
     actionFlowState.container.innerHTML = '';
     actionFlowState.loadedCount = 0;
 
-    // Load initial batch
-    await loadMoreTransactions();
+    // Initialize date picker constraints
+    initActionDatePickers();
+
+    // Apply initial filters (no filters = show all)
+    applyActionFilters();
 
     // Set up scroll listener
     setupScrollListener();
+
+    // Set up filter event listeners
+    setupActionFilterListeners();
+}
+
+// Initialize date picker constraints based on transaction dates
+function initActionDatePickers() {
+    const startInput = document.getElementById('actionStartDate');
+    const endInput = document.getElementById('actionEndDate');
+    if (!startInput || !endInput) return;
+
+    if (actionFlowState.allTransactions.length > 0) {
+        // Get date range from transactions
+        const dates = actionFlowState.allTransactions.map(t => t.date.split(' ')[0]);
+        const minDate = dates[dates.length - 1]; // Oldest (transactions are sorted newest first)
+        const maxDate = dates[0]; // Newest
+
+        startInput.min = minDate;
+        startInput.max = maxDate;
+        endInput.min = minDate;
+        endInput.max = maxDate;
+    }
+}
+
+// Debounce timer for search input
+let actionFilterDebounceTimer = null;
+
+// Debounced filter function
+function debouncedApplyActionFilters(delay = 300) {
+    if (actionFilterDebounceTimer) {
+        clearTimeout(actionFilterDebounceTimer);
+    }
+    actionFilterDebounceTimer = setTimeout(() => {
+        applyActionFilters();
+    }, delay);
+}
+
+// Set up filter event listeners
+function setupActionFilterListeners() {
+    const searchInput = document.getElementById('actionSearch');
+    const startDateInput = document.getElementById('actionStartDate');
+    const endDateInput = document.getElementById('actionEndDate');
+    const resetBtn = document.getElementById('actionDateReset');
+
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            actionFlowState.searchQuery = e.target.value.trim();
+            // Use debounce for text input to reduce flickering
+            debouncedApplyActionFilters(250);
+        });
+    }
+
+    if (startDateInput) {
+        startDateInput.addEventListener('change', (e) => {
+            actionFlowState.startDate = e.target.value || null;
+            applyActionFilters();
+        });
+    }
+
+    if (endDateInput) {
+        endDateInput.addEventListener('change', (e) => {
+            actionFlowState.endDate = e.target.value || null;
+            applyActionFilters();
+        });
+    }
+
+    if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+            if (startDateInput) startDateInput.value = '';
+            if (endDateInput) endDateInput.value = '';
+            actionFlowState.startDate = null;
+            actionFlowState.endDate = null;
+            applyActionFilters();
+        });
+    }
+}
+
+// Apply filters and refresh the action list
+function applyActionFilters() {
+    let filtered = actionFlowState.allTransactions;
+
+    // Filter by date range
+    if (actionFlowState.startDate || actionFlowState.endDate) {
+        filtered = filtered.filter(t => {
+            const transDate = t.date.split(' ')[0];
+            if (actionFlowState.startDate && transDate < actionFlowState.startDate) return false;
+            if (actionFlowState.endDate && transDate > actionFlowState.endDate) return false;
+            return true;
+        });
+    }
+
+    // Filter by search query (symbol or agent name)
+    if (actionFlowState.searchQuery) {
+        const query = actionFlowState.searchQuery.toLowerCase();
+        const currentMarket = dataLoader.getMarket();
+        filtered = filtered.filter(t => {
+            const symbolMatch = t.symbol.toLowerCase().includes(query);
+            const agentMatch = t.agentFolder.toLowerCase().includes(query);
+            const displayName = window.configLoader.getDisplayName(t.agentFolder, currentMarket) || '';
+            const displayNameMatch = displayName.toLowerCase().includes(query);
+            const actionMatch = t.action.toLowerCase().includes(query);
+            return symbolMatch || agentMatch || displayNameMatch || actionMatch;
+        });
+    }
+
+    // Store filtered transactions
+    actionFlowState.filteredTransactions = filtered.slice(0, actionFlowState.maxTransactions);
+
+    // Preserve container height to prevent layout shift
+    const currentHeight = actionFlowState.container.offsetHeight;
+    if (currentHeight > 0) {
+        actionFlowState.container.style.minHeight = currentHeight + 'px';
+    }
+
+    // Reset and reload
+    actionFlowState.container.innerHTML = '';
+    actionFlowState.loadedCount = 0;
+
+    // Mark as filtering to disable animations
+    actionFlowState.isFiltering = true;
+
+    // Load initial batch
+    loadMoreTransactions().then(() => {
+        // Reset min-height after content is loaded
+        setTimeout(() => {
+            actionFlowState.container.style.minHeight = '';
+            actionFlowState.isFiltering = false;
+        }, 100);
+    });
 }
 
 async function loadMoreTransactions() {
     if (actionFlowState.isLoading) return;
-    if (actionFlowState.loadedCount >= actionFlowState.allTransactions.length) return;
+
+    // Use filtered transactions
+    const transactions = actionFlowState.filteredTransactions;
+    if (actionFlowState.loadedCount >= transactions.length) return;
     if (actionFlowState.loadedCount >= actionFlowState.maxTransactions) return;
 
     actionFlowState.isLoading = true;
@@ -960,13 +1101,21 @@ async function loadMoreTransactions() {
     const startIndex = actionFlowState.loadedCount;
     const endIndex = Math.min(
         startIndex + actionFlowState.pageSize,
-        actionFlowState.allTransactions.length,
+        transactions.length,
         actionFlowState.maxTransactions
     );
 
+    // Handle empty results
+    if (transactions.length === 0) {
+        actionFlowState.isLoading = false;
+        hideLoadingIndicator();
+        showNoResultsMessage();
+        return;
+    }
+
     // Load this batch
     for (let i = startIndex; i < endIndex; i++) {
-        const transaction = actionFlowState.allTransactions[i];
+        const transaction = transactions[i];
         const agentName = transaction.agentFolder;
         const currentMarket = dataLoader.getMarket();
         const displayName = window.configLoader.getDisplayName(agentName, currentMarket);
@@ -977,8 +1126,11 @@ async function loadMoreTransactions() {
         const thinking = await window.transactionLoader.loadAgentThinking(agentName, transaction.date, currentMarket);
 
         const cardEl = document.createElement('div');
-        cardEl.className = 'action-card';
-        cardEl.style.animationDelay = `${(i % actionFlowState.pageSize) * 0.03}s`;
+        cardEl.className = 'action-card' + (actionFlowState.isFiltering ? ' no-animation' : '');
+        // Only add animation delay when not filtering
+        if (!actionFlowState.isFiltering) {
+            cardEl.style.animationDelay = `${(i % actionFlowState.pageSize) * 0.03}s`;
+        }
 
         // Build card HTML - only include reasoning section if thinking is available
         let cardHTML = `
@@ -1067,21 +1219,45 @@ function updateStatusNote() {
     noteEl.className = 'transactions-status-note';
     noteEl.style.cssText = 'text-align: center; padding: 1.5rem; color: var(--text-muted); font-size: 0.9rem;';
 
-    const totalAvailable = actionFlowState.allTransactions.length;
+    const filteredCount = actionFlowState.filteredTransactions.length;
+    const totalCount = actionFlowState.allTransactions.length;
     const loaded = actionFlowState.loadedCount;
+    const hasFilters = actionFlowState.searchQuery || actionFlowState.startDate || actionFlowState.endDate;
 
-    if (loaded >= actionFlowState.maxTransactions || loaded >= totalAvailable) {
-        // We've loaded everything we can
-        if (totalAvailable > actionFlowState.maxTransactions) {
-            noteEl.textContent = `Showing the most recent ${loaded} of ${totalAvailable} total transactions`;
+    if (hasFilters) {
+        // Show filtered results info
+        if (loaded >= filteredCount) {
+            noteEl.textContent = `Showing all ${loaded} matching transactions (filtered from ${totalCount} total)`;
         } else {
-            noteEl.textContent = `Showing all ${loaded} recent transactions`;
+            noteEl.textContent = `Loaded ${loaded} of ${filteredCount} matching transactions. Scroll down to load more...`;
         }
     } else {
-        // More to load
-        noteEl.textContent = `Loaded ${loaded} of ${Math.min(totalAvailable, actionFlowState.maxTransactions)} transactions. Scroll down to load more...`;
+        // No filters applied
+        if (loaded >= actionFlowState.maxTransactions || loaded >= filteredCount) {
+            if (totalCount > actionFlowState.maxTransactions) {
+                noteEl.textContent = `Showing the most recent ${loaded} of ${totalCount} total transactions`;
+            } else {
+                noteEl.textContent = `Showing all ${loaded} recent transactions`;
+            }
+        } else {
+            noteEl.textContent = `Loaded ${loaded} of ${Math.min(filteredCount, actionFlowState.maxTransactions)} transactions. Scroll down to load more...`;
+        }
     }
 
+    actionFlowState.container.appendChild(noteEl);
+}
+
+// Show no results message
+function showNoResultsMessage() {
+    const existingNote = actionFlowState.container.querySelector('.transactions-status-note');
+    if (existingNote) {
+        existingNote.remove();
+    }
+
+    const noteEl = document.createElement('div');
+    noteEl.className = 'transactions-status-note';
+    noteEl.style.cssText = 'text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.95rem;';
+    noteEl.textContent = 'No matching transactions found. Try adjusting your filters.';
     actionFlowState.container.appendChild(noteEl);
 }
 
@@ -1098,7 +1274,7 @@ function setupScrollListener() {
         if (scrollHeight - (scrollTop + clientHeight) < 300) {
             if (!actionFlowState.isLoading &&
                 actionFlowState.loadedCount < actionFlowState.maxTransactions &&
-                actionFlowState.loadedCount < actionFlowState.allTransactions.length) {
+                actionFlowState.loadedCount < actionFlowState.filteredTransactions.length) {
                 loadMoreTransactions();
             }
         }

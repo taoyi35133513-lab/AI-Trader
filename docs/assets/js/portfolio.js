@@ -6,6 +6,15 @@ let allAgentsData = {};
 let currentAgent = null;
 let allocationChart = null;
 
+// Store data for search functionality
+let currentHoldingsData = [];
+let currentTradesData = [];
+
+// Store current filter state
+let currentHoldingsDate = null;  // null means latest
+let currentTradeStartDate = null;
+let currentTradeEndDate = null;
+
 // Load data and refresh UI
 async function loadDataAndRefresh() {
     showLoading();
@@ -124,6 +133,13 @@ async function loadAgentPortfolio(agentName) {
         currentAgent = agentName;
         const data = allAgentsData[agentName];
 
+        // Reset filters when switching agents
+        resetFilters();
+
+        // Update date pickers with agent's date range
+        updateHoldingsDatePicker(agentName);
+        updateTradeDatePickers(agentName);
+
         // Update performance metrics
         updateMetrics(data);
 
@@ -143,6 +159,28 @@ async function loadAgentPortfolio(agentName) {
     }
 }
 
+// Reset all filters
+function resetFilters() {
+    // Reset search inputs
+    const holdingsSearch = document.getElementById('holdingsSearch');
+    const tradeSearch = document.getElementById('tradeSearch');
+    if (holdingsSearch) holdingsSearch.value = '';
+    if (tradeSearch) tradeSearch.value = '';
+
+    // Reset date inputs
+    const holdingsDate = document.getElementById('holdingsDate');
+    const tradeStartDate = document.getElementById('tradeStartDate');
+    const tradeEndDate = document.getElementById('tradeEndDate');
+    if (holdingsDate) holdingsDate.value = '';
+    if (tradeStartDate) tradeStartDate.value = '';
+    if (tradeEndDate) tradeEndDate.value = '';
+
+    // Reset state
+    currentHoldingsDate = null;
+    currentTradeStartDate = null;
+    currentTradeEndDate = null;
+}
+
 // Update performance metrics
 function updateMetrics(data) {
     const totalAsset = data.currentValue;
@@ -158,44 +196,148 @@ function updateMetrics(data) {
     document.getElementById('totalTrades').textContent = totalTrades;
 }
 
+// Get holdings for a specific date
+function getHoldingsForDate(agentName, targetDate) {
+    const data = allAgentsData[agentName];
+    if (!data || !data.positions || data.positions.length === 0) {
+        return null;
+    }
+
+    // Find the position at or before the target date
+    let targetPosition = null;
+    for (let i = data.positions.length - 1; i >= 0; i--) {
+        const position = data.positions[i];
+        const posDate = position.date.split(' ')[0]; // Get date part only
+        if (posDate <= targetDate) {
+            targetPosition = position;
+            break;
+        }
+    }
+
+    if (!targetPosition || !targetPosition.positions) {
+        return null;
+    }
+
+    return targetPosition.positions;
+}
+
+// Get available date range for an agent
+function getAgentDateRange(agentName) {
+    const data = allAgentsData[agentName];
+    if (!data || !data.assetHistory || data.assetHistory.length === 0) {
+        return { min: null, max: null };
+    }
+
+    const firstDate = data.assetHistory[0].date.split(' ')[0];
+    const lastDate = data.assetHistory[data.assetHistory.length - 1].date.split(' ')[0];
+
+    return { min: firstDate, max: lastDate };
+}
+
+// Update date picker constraints
+function updateHoldingsDatePicker(agentName) {
+    const dateInput = document.getElementById('holdingsDate');
+    if (!dateInput) return;
+
+    const { min, max } = getAgentDateRange(agentName);
+    if (min && max) {
+        dateInput.min = min;
+        dateInput.max = max;
+        // Set default value to max (latest) if not already set
+        if (!dateInput.value) {
+            dateInput.value = max;
+        }
+    }
+}
+
 // Update holdings table
-async function updateHoldingsTable(agentName) {
-    console.log(`[updateHoldingsTable] Loading holdings for: ${agentName}`);
-    const holdings = dataLoader.getCurrentHoldings(agentName);
-    console.log(`[updateHoldingsTable] Holdings:`, holdings);
+async function updateHoldingsTable(agentName, searchQuery = '', targetDate = null) {
+    console.log(`[updateHoldingsTable] Loading holdings for: ${agentName}, date: ${targetDate || 'latest'}`);
+
+    const data = allAgentsData[agentName];
+    if (!data || !data.assetHistory || data.assetHistory.length === 0) {
+        currentHoldingsData = [];
+        return;
+    }
+
+    // Determine which date to use
+    let useDate = targetDate;
+    let holdings;
+
+    if (targetDate) {
+        // Get holdings for specific date
+        holdings = getHoldingsForDate(agentName, targetDate);
+    } else {
+        // Get current (latest) holdings
+        holdings = dataLoader.getCurrentHoldings(agentName);
+        useDate = data.assetHistory[data.assetHistory.length - 1].date.split(' ')[0];
+    }
+
+    console.log(`[updateHoldingsTable] Holdings for ${useDate}:`, holdings);
     const tableBody = document.getElementById('holdingsTableBody');
     tableBody.innerHTML = '';
 
     if (!holdings) {
-        console.log(`[updateHoldingsTable] No holdings found, returning early`);
+        console.log(`[updateHoldingsTable] No holdings found`);
+        currentHoldingsData = [];
+        renderHoldingsTable([], 0);
         return;
     }
-
-    const data = allAgentsData[agentName];
-    if (!data || !data.assetHistory || data.assetHistory.length === 0) {
-        return;
-    }
-
-    const latestDate = data.assetHistory[data.assetHistory.length - 1].date;
-    const totalValue = data.currentValue;
 
     // Get all stocks with non-zero holdings
     const stocks = Object.entries(holdings)
         .filter(([symbol, shares]) => symbol !== 'CASH' && shares > 0);
 
-    // Sort by market value (descending)
+    // Calculate total value based on prices at that date
+    let totalValue = holdings.CASH || 0;
     const holdingsData = await Promise.all(
         stocks.map(async ([symbol, shares]) => {
-            const price = await dataLoader.getClosingPrice(symbol, latestDate);
+            const price = await dataLoader.getClosingPrice(symbol, useDate);
             const marketValue = price ? shares * price : 0;
+            totalValue += marketValue;
             return { symbol, shares, price, marketValue };
         })
     );
 
+    // Update totalValue in each holding
+    holdingsData.forEach(h => h.totalValue = totalValue);
     holdingsData.sort((a, b) => b.marketValue - a.marketValue);
 
-    // Create table rows
-    holdingsData.forEach(holding => {
+    // Add cash to holdings data
+    if (holdings.CASH > 0) {
+        holdingsData.push({
+            symbol: 'CASH',
+            shares: null,
+            price: null,
+            marketValue: holdings.CASH,
+            totalValue,
+            isCash: true
+        });
+    }
+
+    // Store for search functionality
+    currentHoldingsData = holdingsData;
+
+    // Filter by search query
+    const filteredData = searchQuery
+        ? holdingsData.filter(h => h.symbol.toLowerCase().includes(searchQuery.toLowerCase()))
+        : holdingsData;
+
+    // Render holdings table
+    renderHoldingsTable(filteredData, totalValue);
+}
+
+// Render holdings table with filtered data
+function renderHoldingsTable(holdingsData, totalValue) {
+    const tableBody = document.getElementById('holdingsTableBody');
+    tableBody.innerHTML = '';
+
+    // Separate stock holdings and cash
+    const stockHoldings = holdingsData.filter(h => !h.isCash);
+    const cashHolding = holdingsData.find(h => h.isCash);
+
+    // Create table rows for stocks
+    stockHoldings.forEach(holding => {
         const weight = (holding.marketValue / totalValue * 100).toFixed(2);
         const row = document.createElement('tr');
         row.innerHTML = `
@@ -208,22 +350,22 @@ async function updateHoldingsTable(agentName) {
         tableBody.appendChild(row);
     });
 
-    // Add cash row
-    if (holdings.CASH > 0) {
-        const cashWeight = (holdings.CASH / totalValue * 100).toFixed(2);
+    // Add cash row if present in filtered results
+    if (cashHolding) {
+        const cashWeight = (cashHolding.marketValue / totalValue * 100).toFixed(2);
         const cashRow = document.createElement('tr');
         cashRow.innerHTML = `
             <td class="symbol">CASH</td>
             <td>-</td>
             <td>-</td>
-            <td>${dataLoader.formatCurrency(holdings.CASH)}</td>
+            <td>${dataLoader.formatCurrency(cashHolding.marketValue)}</td>
             <td>${cashWeight}%</td>
         `;
         tableBody.appendChild(cashRow);
     }
 
     // If no holdings data, show a message
-    if (holdingsData.length === 0 && (!holdings.CASH || holdings.CASH === 0)) {
+    if (holdingsData.length === 0) {
         const noDataRow = document.createElement('tr');
         noDataRow.innerHTML = `
             <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">
@@ -232,6 +374,18 @@ async function updateHoldingsTable(agentName) {
         `;
         tableBody.appendChild(noDataRow);
     }
+}
+
+// Filter holdings by search query
+function filterHoldings(searchQuery) {
+    if (!currentHoldingsData.length) return;
+
+    const totalValue = currentHoldingsData[0]?.totalValue || 0;
+    const filteredData = searchQuery
+        ? currentHoldingsData.filter(h => h.symbol.toLowerCase().includes(searchQuery.toLowerCase()))
+        : currentHoldingsData;
+
+    renderHoldingsTable(filteredData, totalValue);
 }
 
 // Update allocation chart (pie chart)
@@ -328,20 +482,45 @@ async function updateAllocationChart(agentName) {
 }
 
 // Update trade history timeline
-function updateTradeHistory(agentName) {
+function updateTradeHistory(agentName, searchQuery = '') {
     const trades = dataLoader.getTradeHistory(agentName);
-    const timeline = document.getElementById('tradeTimeline');
-    timeline.innerHTML = '';
 
     if (trades.length === 0) {
+        currentTradesData = [];
+        const timeline = document.getElementById('tradeTimeline');
         timeline.innerHTML = '<p style="color: var(--text-muted);">No trade history available.</p>';
         return;
     }
 
-    // Show latest 20 trades
-    const recentTrades = trades.slice(0, 20);
+    // Store all trades for search functionality (not just recent 20)
+    currentTradesData = trades;
 
-    recentTrades.forEach(trade => {
+    // Filter by search query
+    const filteredTrades = searchQuery
+        ? trades.filter(t =>
+            t.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            t.action.toLowerCase().includes(searchQuery.toLowerCase())
+          )
+        : trades;
+
+    // Render trades
+    renderTradeHistory(filteredTrades);
+}
+
+// Render trade history with filtered data
+function renderTradeHistory(trades) {
+    const timeline = document.getElementById('tradeTimeline');
+    timeline.innerHTML = '';
+
+    if (trades.length === 0) {
+        timeline.innerHTML = '<p style="color: var(--text-muted);">No matching trades found.</p>';
+        return;
+    }
+
+    // Show latest 50 trades when searching, 20 otherwise
+    const displayTrades = trades.slice(0, 50);
+
+    displayTrades.forEach(trade => {
         const tradeItem = document.createElement('div');
         tradeItem.className = 'trade-item';
 
@@ -372,6 +551,76 @@ function updateTradeHistory(agentName) {
 
         timeline.appendChild(tradeItem);
     });
+
+    // Show count if there are more trades
+    if (trades.length > 50) {
+        const moreInfo = document.createElement('p');
+        moreInfo.style.cssText = 'color: var(--text-muted); text-align: center; margin-top: 1rem;';
+        moreInfo.textContent = `Showing 50 of ${trades.length} matching trades`;
+        timeline.appendChild(moreInfo);
+    }
+}
+
+// Filter trades by search query and date range
+function filterTrades(searchQuery = '', startDate = null, endDate = null) {
+    if (!currentTradesData.length) return;
+
+    let filteredTrades = currentTradesData;
+
+    // Filter by date range
+    if (startDate || endDate) {
+        filteredTrades = filteredTrades.filter(t => {
+            const tradeDate = t.date.split(' ')[0]; // Get date part only
+            if (startDate && tradeDate < startDate) return false;
+            if (endDate && tradeDate > endDate) return false;
+            return true;
+        });
+    }
+
+    // Filter by search query
+    if (searchQuery) {
+        filteredTrades = filteredTrades.filter(t =>
+            t.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            t.action.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+    }
+
+    renderTradeHistory(filteredTrades);
+}
+
+// Update trade date picker constraints
+function updateTradeDatePickers(agentName) {
+    const startInput = document.getElementById('tradeStartDate');
+    const endInput = document.getElementById('tradeEndDate');
+    if (!startInput || !endInput) return;
+
+    const { min, max } = getAgentDateRange(agentName);
+    if (min && max) {
+        startInput.min = min;
+        startInput.max = max;
+        endInput.min = min;
+        endInput.max = max;
+    }
+}
+
+// Apply current filters to holdings
+async function applyHoldingsFilters() {
+    if (!currentAgent) return;
+
+    const searchQuery = document.getElementById('holdingsSearch')?.value.trim() || '';
+    const dateInput = document.getElementById('holdingsDate');
+    const targetDate = dateInput?.value || null;
+
+    await updateHoldingsTable(currentAgent, searchQuery, targetDate);
+}
+
+// Apply current filters to trades
+function applyTradeFilters() {
+    const searchQuery = document.getElementById('tradeSearch')?.value.trim() || '';
+    const startDate = document.getElementById('tradeStartDate')?.value || null;
+    const endDate = document.getElementById('tradeEndDate')?.value || null;
+
+    filterTrades(searchQuery, startDate, endDate);
 }
 
 // Update UI based on current market state
@@ -474,6 +723,68 @@ function setupEventListeners() {
     scrollBtn.addEventListener('click', () => {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     });
+
+    // Search functionality for holdings
+    const holdingsSearch = document.getElementById('holdingsSearch');
+    if (holdingsSearch) {
+        holdingsSearch.addEventListener('input', () => {
+            applyHoldingsFilters();
+        });
+    }
+
+    // Date picker for holdings
+    const holdingsDate = document.getElementById('holdingsDate');
+    if (holdingsDate) {
+        holdingsDate.addEventListener('change', () => {
+            applyHoldingsFilters();
+        });
+    }
+
+    // Reset button for holdings date
+    const holdingsDateReset = document.getElementById('holdingsDateReset');
+    if (holdingsDateReset) {
+        holdingsDateReset.addEventListener('click', () => {
+            const dateInput = document.getElementById('holdingsDate');
+            if (dateInput) dateInput.value = '';
+            applyHoldingsFilters();
+        });
+    }
+
+    // Search functionality for trade history
+    const tradeSearch = document.getElementById('tradeSearch');
+    if (tradeSearch) {
+        tradeSearch.addEventListener('input', () => {
+            applyTradeFilters();
+        });
+    }
+
+    // Date pickers for trade history
+    const tradeStartDate = document.getElementById('tradeStartDate');
+    const tradeEndDate = document.getElementById('tradeEndDate');
+
+    if (tradeStartDate) {
+        tradeStartDate.addEventListener('change', () => {
+            applyTradeFilters();
+        });
+    }
+
+    if (tradeEndDate) {
+        tradeEndDate.addEventListener('change', () => {
+            applyTradeFilters();
+        });
+    }
+
+    // Reset button for trade dates
+    const tradeDateReset = document.getElementById('tradeDateReset');
+    if (tradeDateReset) {
+        tradeDateReset.addEventListener('click', () => {
+            const startInput = document.getElementById('tradeStartDate');
+            const endInput = document.getElementById('tradeEndDate');
+            if (startInput) startInput.value = '';
+            if (endInput) endInput.value = '';
+            applyTradeFilters();
+        });
+    }
 }
 
 // Loading overlay controls
