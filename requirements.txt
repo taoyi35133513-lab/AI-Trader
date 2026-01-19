@@ -7,3 +7,8 @@ pyyaml
 # A_stock
 tushare
 efinance
+
+# Scheduled trading
+apscheduler>=3.10.0
+pytz
+akshare
