@@ -206,6 +206,36 @@ class ConfigLoader {
         console.log('[getEnabledMarkets] Enabled markets:', Object.keys(enabledMarkets));
         return enabledMarkets;
     }
+
+    // Get API configuration
+    getApiConfig() {
+        if (!this.config || !this.config.api) {
+            return {
+                enabled: false,
+                base_url: 'http://localhost:8000',
+                fallback_to_files: true
+            };
+        }
+        return this.config.api;
+    }
+
+    // Check if API mode is enabled
+    isApiEnabled() {
+        const apiConfig = this.getApiConfig();
+        return apiConfig.enabled === true;
+    }
+
+    // Get API base URL
+    getApiBaseUrl() {
+        const apiConfig = this.getApiConfig();
+        return apiConfig.base_url || 'http://localhost:8000';
+    }
+
+    // Check if fallback to files is enabled
+    isApiFallbackEnabled() {
+        const apiConfig = this.getApiConfig();
+        return apiConfig.fallback_to_files !== false;
+    }
 }
 
 // Create a global instance

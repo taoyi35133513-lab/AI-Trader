@@ -33,10 +33,22 @@ class MCPServiceManager:
 
         # Service configurations
         mcp_server_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # 新闻源选择：支持 alphavantage, finnhub, akshare, jina
+        # 通过环境变量 NEWS_SOURCE 配置，默认使用 akshare（A股推荐）
+        news_source = os.getenv("NEWS_SOURCE", "akshare").lower()
+        news_scripts = {
+            "akshare": "tool_akshare_news.py",      # A股推荐，免费无限制
+            "alphavantage": "tool_alphavantage_news.py",  # 美股，需要 API Key
+            "finnhub": "tool_finnhub_news.py",      # 美股，需要 API Key
+            "jina": "tool_jina_search.py",          # 通用网页搜索
+        }
+        news_script = news_scripts.get(news_source, "tool_alphavantage_news.py")
+        print(f"📰 News source: {news_source} ({news_script})")
+
         self.service_configs = {
             "math": {"script": os.path.join(mcp_server_dir, "tool_math.py"), "name": "Math", "port": self.ports["math"]},
-            # "search": {"script": "tool_jina_search.py", "name": "Search", "port": self.ports["search"]},
-            "search": {"script": os.path.join(mcp_server_dir, "tool_alphavantage_news.py"), "name": "Search", "port": self.ports["search"]},  
+            "search": {"script": os.path.join(mcp_server_dir, news_script), "name": "Search", "port": self.ports["search"]},
             "trade": {"script": os.path.join(mcp_server_dir, "tool_trade.py"), "name": "TradeTools", "port": self.ports["trade"]},
             "price": {"script": os.path.join(mcp_server_dir, "tool_get_price_local.py"), "name": "LocalPrices", "port": self.ports["price"]},
             "crypto": {"script": os.path.join(mcp_server_dir, "tool_crypto_trade.py"), "name": "CryptoTradeTools", "port": self.ports["crypto"]},

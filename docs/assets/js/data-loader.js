@@ -9,6 +9,8 @@ class DataLoader {
         this.baseDataPath = './data';
         this.currentMarket = 'us'; // 'us' or 'cn'
         this.cacheManager = new CacheManager(); // Initialize cache manager
+        this.apiBaseUrl = null;
+        this.useApi = false;
     }
 
     inferProviderKey(agentName) {
@@ -104,6 +106,33 @@ class DataLoader {
         if (!this.config) {
             this.config = await window.configLoader.loadConfig();
             this.baseDataPath = window.configLoader.getDataPath();
+
+            // Check if API mode is enabled
+            this.useApi = window.configLoader.isApiEnabled();
+            if (this.useApi) {
+                this.apiBaseUrl = window.configLoader.getApiBaseUrl();
+                console.log(`[DataLoader] API mode enabled: ${this.apiBaseUrl}`);
+
+                // Test API availability
+                try {
+                    const response = await fetch(`${this.apiBaseUrl}/api/health`, {
+                        method: 'GET',
+                        signal: AbortSignal.timeout(3000)
+                    });
+                    if (!response.ok) {
+                        throw new Error(`API returned ${response.status}`);
+                    }
+                    console.log('[DataLoader] API is available');
+                } catch (error) {
+                    console.warn('[DataLoader] API unavailable, checking fallback setting:', error.message);
+                    if (window.configLoader.isApiFallbackEnabled()) {
+                        console.log('[DataLoader] Falling back to file-based loading');
+                        this.useApi = false;
+                    } else {
+                        throw new Error('API is unavailable and fallback is disabled');
+                    }
+                }
+            }
         }
     }
 
@@ -754,10 +783,111 @@ class DataLoader {
         }
     }
 
+    // Load all agents data via API
+    async loadAllAgentsDataViaApi() {
+        const startTime = performance.now();
+        console.log(`[loadAllAgentsDataViaApi] Fetching from API for market: ${this.currentMarket}`);
+
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/api/dashboard/${this.currentMarket}`);
+            if (!response.ok) {
+                throw new Error(`API returned ${response.status}`);
+            }
+
+            const dashboardData = await response.json();
+            const allData = {};
+
+            // Process asset histories from API
+            for (const agentHistory of dashboardData.asset_histories || []) {
+                const agentName = agentHistory.agent_name;
+                const history = agentHistory.history || [];
+
+                if (history.length > 0) {
+                    allData[agentName] = {
+                        name: agentName,
+                        positions: [], // Positions can be loaded separately if needed
+                        assetHistory: history.map(h => ({
+                            date: h.date,
+                            value: h.total_value,
+                            id: h.id || `${agentName}-${h.date}`,
+                            action: h.action || null
+                        })),
+                        initialValue: history[0]?.total_value || 10000,
+                        currentValue: history[history.length - 1]?.total_value || 0,
+                        return: history.length > 0 ?
+                            ((history[history.length - 1].total_value - history[0].total_value) / history[0].total_value * 100) : 0
+                    };
+                }
+            }
+
+            // Process benchmark data
+            if (dashboardData.benchmark && dashboardData.benchmark.data) {
+                const benchmarkName = dashboardData.benchmark.name;
+                const benchmarkData = dashboardData.benchmark.data;
+
+                if (benchmarkData.length > 0) {
+                    const initialValue = allData[Object.keys(allData)[0]]?.initialValue || 10000;
+                    const firstPrice = benchmarkData[0]?.close;
+
+                    allData[benchmarkName] = {
+                        name: benchmarkName,
+                        positions: [],
+                        assetHistory: benchmarkData.map(d => {
+                            const benchmarkReturn = (d.close - firstPrice) / firstPrice;
+                            return {
+                                date: d.date,
+                                value: initialValue * (1 + benchmarkReturn),
+                                id: `${benchmarkName}-${d.date}`,
+                                action: null
+                            };
+                        }),
+                        initialValue: initialValue,
+                        currentValue: 0,
+                        return: 0
+                    };
+
+                    // Calculate final values
+                    const benchHistory = allData[benchmarkName].assetHistory;
+                    if (benchHistory.length > 0) {
+                        allData[benchmarkName].currentValue = benchHistory[benchHistory.length - 1].value;
+                        allData[benchmarkName].return =
+                            ((benchHistory[benchHistory.length - 1].value - benchHistory[0].value) / benchHistory[0].value * 100);
+                    }
+                }
+            }
+
+            const loadTime = performance.now() - startTime;
+            console.log(`%c✓ API data loaded in ${loadTime.toFixed(2)}ms`, 'color: #00ff00; font-weight: bold');
+
+            this.agentData = allData;
+            return allData;
+        } catch (error) {
+            console.error('[loadAllAgentsDataViaApi] API error:', error);
+            throw error;
+        }
+    }
+
     // Load all agents data with caching
     async loadAllAgentsData() {
         const startTime = performance.now();
         console.log(`[loadAllAgentsData] Starting for market: ${this.currentMarket}`);
+
+        // Ensure initialized
+        await this.initialize();
+
+        // Try API mode first if enabled
+        if (this.useApi) {
+            try {
+                return await this.loadAllAgentsDataViaApi();
+            } catch (error) {
+                console.warn('[loadAllAgentsData] API failed, checking fallback:', error.message);
+                if (window.configLoader.isApiFallbackEnabled()) {
+                    console.log('[loadAllAgentsData] Falling back to file-based loading');
+                } else {
+                    throw error;
+                }
+            }
+        }
 
         // Try to load from cache first
         console.log(`[loadAllAgentsData] Loading cache for market: ${this.currentMarket}`);

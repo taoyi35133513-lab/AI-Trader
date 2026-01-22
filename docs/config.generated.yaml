@@ -82,3 +82,7 @@ cache:
   enabled: true
   max_age_days: 7
   show_performance_metrics: true
+api:
+  enabled: true
+  base_url: http://localhost:8000
+  fallback_to_files: true

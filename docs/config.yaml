@@ -182,3 +182,9 @@ cache:
   enabled: true  # Enable caching for faster page loads
   max_age_days: 7  # Maximum age of localStorage cache in days
   show_performance_metrics: true  # Show load time comparison in console
+
+# API settings
+api:
+  enabled: true  # Enable API mode (fetch from FastAPI backend)
+  base_url: "http://localhost:8000"  # FastAPI backend URL
+  fallback_to_files: true  # Fallback to static files if API unavailable
