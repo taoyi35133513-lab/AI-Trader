@@ -1,4 +1,12 @@
+"""
+MCP tool for local price data access.
+
+This module provides MCP tool endpoints for querying stock price data.
+It uses DuckDB as the primary data source with automatic fallback to JSONL files.
+"""
+
 import json
+import logging
 import os
 import sys
 from datetime import datetime
@@ -21,6 +29,20 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from tools.general_tools import get_config_value
+from tools.data_access import PriceDataAccess
+
+logger = logging.getLogger(__name__)
+
+# Lazy-loaded price data access singleton
+_price_access = None
+
+
+def _get_price_access() -> PriceDataAccess:
+    """Get or create PriceDataAccess singleton."""
+    global _price_access
+    if _price_access is None:
+        _price_access = PriceDataAccess(market="cn")
+    return _price_access
 
 
 def _workspace_data_path(filename: str, symbol: Optional[str] = None) -> Path:
@@ -103,184 +125,91 @@ def get_price_local(symbol: str, date: str) -> Dict[str, Any]:
 def get_price_local_daily(symbol: str, date: str) -> Dict[str, Any]:
     """Read OHLCV data for specified stock and date. Get historical information for specified stock.
 
+    Uses DuckDB as the primary data source with automatic fallback to JSONL.
+
     Args:
-        symbol: Stock symbol, e.g. 'IBM' or '600243.SHH'.
+        symbol: Stock symbol, e.g. '600519.SH'.
         date: Date in 'YYYY-MM-DD' format.
 
     Returns:
         Dictionary containing symbol, date and ohlcv data.
     """
-    filename = "merged.jsonl"
     try:
         _validate_date_daily(date)
     except ValueError as e:
         return {"error": str(e), "symbol": symbol, "date": date}
 
-    data_path = _workspace_data_path(filename, symbol)
-    if not data_path.exists():
-        return {"error": f"Data file not found: {data_path}", "symbol": symbol, "date": date}
+    # Use data access layer (DuckDB-first with JSONL fallback)
+    result = _get_price_access().get_ohlcv(symbol, date)
 
-    with data_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            doc = json.loads(line)
-            meta = doc.get("Meta Data", {})
-            if meta.get("2. Symbol") != symbol:
-                continue
-            series = doc.get("Time Series (Daily)", {})
-            day = series.get(date)
-            if day is None:
-                sample_dates = sorted(series.keys(), reverse=True)[:5]
-                return {
-                    "error": f"Data not found for date {date}. Please verify the date exists in data. Sample available dates: {sample_dates}",
-                    "symbol": symbol,
-                    "date": date,
-                }
-            if date == get_config_value("TODAY_DATE"):
-                return {
-                    "symbol": symbol,
-                    "date": date,
-                    "ohlcv": {
-                        "open": day.get("1. buy price"),
-                        "high": "You can not get the current high price",
-                        "low": "You can not get the current low price", 
-                        "close": "You can not get the next close price",
-                        "volume": "You can not get the current volume",
-                    },
-                }
-            else:
-                return {
-                    "symbol": symbol,
-                    "date": date,
-                    "ohlcv": {
-                        "open": day.get("1. buy price"),
-                        "high": day.get("2. high"),
-                        "low": day.get("3. low"), 
-                        "close": day.get("4. sell price"),
-                        "volume": day.get("5. volume"),
-                    },
-                }
+    # Handle "today" scenario - mask future data
+    if "error" not in result and date == get_config_value("TODAY_DATE"):
+        ohlcv = result.get("ohlcv", {})
+        result["ohlcv"] = {
+            "open": ohlcv.get("open"),
+            "high": "You can not get the current high price",
+            "low": "You can not get the current low price",
+            "close": "You can not get the next close price",
+            "volume": "You can not get the current volume",
+        }
 
-
-    return {"error": f"No records found for stock {symbol} in local data", "symbol": symbol, "date": date}
+    return result
 
 
 def get_price_local_hourly(symbol: str, date: str) -> Dict[str, Any]:
-    """Read OHLCV data for specified stock and date. Get historical information for specified stock.
+    """Read hourly OHLCV data for specified stock and datetime.
+
+    Uses DuckDB as the primary data source with automatic fallback to JSONL.
 
     Args:
-        symbol: Stock symbol, e.g. 'IBM' or '600243.SHH'.
-        date: Date in 'YYYY-MM-DD' format.
+        symbol: Stock symbol, e.g. '600519.SH'.
+        date: Datetime in 'YYYY-MM-DD HH:MM:SS' format.
 
     Returns:
         Dictionary containing symbol, date and ohlcv data.
     """
-    filename = "merged.jsonl"
     try:
         _validate_date_hourly(date)
     except ValueError as e:
         return {"error": str(e), "symbol": symbol, "date": date}
 
-    data_path = _workspace_data_path(filename)
-    if not data_path.exists():
-        return {"error": f"Data file not found: {data_path}", "symbol": symbol, "date": date}
+    # Use data access layer (DuckDB-first with JSONL fallback)
+    result = _get_price_access().get_ohlcv(symbol, date)
 
-    with data_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            doc = json.loads(line)
-            meta = doc.get("Meta Data", {})
-            if meta.get("2. Symbol") != symbol:
-                continue
-            series = doc.get("Time Series (60min)", {})
-            day = series.get(date)
-            if day is None:
-                sample_dates = sorted(series.keys(), reverse=True)[:5]
-                return {
-                    "error": f"Data not found for date {date}. Please verify the date exists in data. Sample available dates: {sample_dates}",
-                    "symbol": symbol,
-                    "date": date
-                }
-            if date == get_config_value("TODAY_DATE"):
-                return {
-                    "symbol": symbol,
-                    "date": date,
-                    "ohlcv": {
-                        "open": day.get("1. buy price"),
-                        "high": "You can not get the current high price",
-                        "low": "You can not get the current low price", 
-                        "close": "You can not get the next close price",
-                        "volume": "You can not get the current volume",
-                    },
-                }
-            else:
-                return {
-                    "symbol": symbol,
-                    "date": date,
-                    "ohlcv": {
-                        "open": day.get("1. buy price"),
-                        "high": day.get("2. high"),
-                        "low": day.get("3. low"), 
-                        "close": day.get("4. sell price"),
-                        "volume": day.get("5. volume"),
-                    },
-                }
+    # Handle "today" scenario - mask future data
+    if "error" not in result and date == get_config_value("TODAY_DATE"):
+        ohlcv = result.get("ohlcv", {})
+        result["ohlcv"] = {
+            "open": ohlcv.get("open"),
+            "high": "You can not get the current high price",
+            "low": "You can not get the current low price",
+            "close": "You can not get the next close price",
+            "volume": "You can not get the current volume",
+        }
 
-    return {"error": f"No records found for stock {symbol} in local data", "symbol": symbol, "date": date}
+    return result
 
 
 def get_price_local_function(symbol: str, date: str, filename: str = "merged.jsonl") -> Dict[str, Any]:
-    """Read OHLCV data for specified stock and date from local JSONL data.
+    """Read OHLCV data for specified stock and date.
+
+    Uses DuckDB as the primary data source with automatic fallback to JSONL.
+    This function is kept for backward compatibility.
 
     Args:
-        symbol: Stock symbol, e.g. 'IBM' or '600243.SHH'.
+        symbol: Stock symbol, e.g. '600519.SH'.
         date: Date in 'YYYY-MM-DD' format.
-        filename: Data filename, defaults to 'merged.jsonl' (located in data/ under project root).
+        filename: Data filename (ignored, kept for backward compatibility).
 
     Returns:
         Dictionary containing symbol, date and ohlcv data.
     """
     try:
-        _validate_date(date)
+        _validate_date_daily(date)
     except ValueError as e:
         return {"error": str(e), "symbol": symbol, "date": date}
 
-    data_path = _workspace_data_path(filename, symbol)
-    if not data_path.exists():
-        return {"error": f"Data file not found: {data_path}", "symbol": symbol, "date": date}
-
-    with data_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            doc = json.loads(line)
-            meta = doc.get("Meta Data", {})
-            if meta.get("2. Symbol") != symbol:
-                continue
-            series = doc.get("Time Series (Daily)", {})
-            day = series.get(date)
-            if day is None:
-                sample_dates = sorted(series.keys(), reverse=True)[:5]
-                return {
-                    "error": f"Data not found for date {date}. Please verify the date exists in data. Sample available dates: {sample_dates}",
-                    "symbol": symbol,
-                    "date": date,
-                }
-            return {
-                "symbol": symbol,
-                "date": date,
-                "ohlcv": {
-                    "buy price": day.get("1. buy price"),
-                    "high": day.get("2. high"),
-                    "low": day.get("3. low"),
-                    "sell price": day.get("4. sell price"),
-                    "volume": day.get("5. volume"),
-                },
-            }
-
-    return {"error": f"No records found for stock {symbol} in local data", "symbol": symbol, "date": date}
+    return _get_price_access().get_ohlcv(symbol, date)
 
 
 if __name__ == "__main__":

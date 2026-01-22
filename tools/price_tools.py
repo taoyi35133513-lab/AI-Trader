@@ -1,9 +1,23 @@
+"""
+Price and position data access utilities.
+
+This module provides functions for accessing price data and position records.
+It uses DuckDB as the primary data source with automatic fallback to JSONL files.
+
+Usage:
+    from tools.price_tools import get_open_prices, get_latest_position
+
+    prices = get_open_prices("2025-10-30", ["600519.SH"])
+    position, action_id = get_latest_position("2025-10-30", "gpt-5")
+"""
+
 import os
 
 from dotenv import load_dotenv
 
 load_dotenv()
 import json
+import logging
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -14,6 +28,30 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 from tools.general_tools import get_config_value
+
+logger = logging.getLogger(__name__)
+
+# Lazy-loaded data access instances (singleton pattern)
+_price_access = None
+_position_access = None
+
+
+def _get_price_access():
+    """Get or create PriceDataAccess singleton."""
+    global _price_access
+    if _price_access is None:
+        from tools.data_access import PriceDataAccess
+        _price_access = PriceDataAccess(market="cn")
+    return _price_access
+
+
+def _get_position_access():
+    """Get or create PositionDataAccess singleton."""
+    global _position_access
+    if _position_access is None:
+        from tools.data_access import PositionDataAccess
+        _position_access = PositionDataAccess()
+    return _position_access
 
 def _normalize_timestamp_str(ts: str) -> str:
     """
@@ -140,105 +178,33 @@ def _resolve_merged_file_path_for_date(
     return get_merged_file_path(market)
 
 
-def is_trading_day(date: str, market: str = "us") -> bool:
-    """Check if a given date is a trading day by looking up merged.jsonl.
+def is_trading_day(date: str, market: str = "cn") -> bool:
+    """Check if a given date is a trading day.
+
+    Uses DuckDB as the primary data source with automatic fallback to JSONL.
 
     Args:
         date: Date string in "YYYY-MM-DD" format
-        market: Market type ("us", "cn", or "crypto")
+        market: Market type (default: "cn" for A-shares)
 
     Returns:
-        True if the date exists in merged.jsonl (is a trading day), False otherwise
+        True if the date is a trading day, False otherwise
     """
-    # MVP assumption: crypto trades every day, but the date should not be neither in the future nor no any data yet.
-    # if market == "crypto":
-    #     # Parse input date/time and compare real-world time (to the minute).
-    #     # If input has no time part, default to 00:00. Supported formats:
-    #     #   "YYYY-MM-DD", "YYYY-MM-DD HH:MM", "YYYY-MM-DD HH:MM:SS"
-    #     fmt_candidates = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"]
-    #     input_dt = None
-    #     for fmt in fmt_candidates:
-    #         try:
-    #             input_dt = datetime.strptime(date, fmt)
-    #             break
-    #         except Exception:
-    #             continue
-    #     if input_dt is None:
-    #         # Unable to parse input date -> treat as not a trading day
-    #         return False
-
-    #     # Normalize to minute precision (ignore seconds/microseconds)
-    #     input_dt = input_dt.replace(second=0, microsecond=0)
-    #     now_minute = datetime.now().replace(second=0, microsecond=0)
-
-    #     # If current real-world time is earlier than the requested time, it's future -> return False
-    #     if now_minute < input_dt:
-    #         return False
-    #     return True
-
-    merged_file_path = get_merged_file_path(market)
-
-    if not merged_file_path.exists():
-        print(f"⚠️  Warning: {merged_file_path} not found, cannot validate trading day")
-        return False
-
-    try:
-        with open(merged_file_path, "r", encoding="utf-8") as f:
-            # Read first line to check if date exists
-            for line in f:
-                try:
-                    data = json.loads(line.strip())
-                    # Check for daily time series first
-                    time_series = data.get("Time Series (Daily)", {})
-                    if date in time_series:
-                        return True
-
-                    # If no daily data, check for hourly data (e.g., "Time Series (60min)")
-                    for key, value in data.items():
-                        if key.startswith("Time Series") and isinstance(value, dict):
-                            # Check if any hourly timestamp starts with the date
-                            for timestamp in value.keys():
-                                if timestamp.startswith(date):
-                                    return True
-                except json.JSONDecodeError:
-                    continue
-            # If we get here, checked all stocks and date was not found in any
-            return False
-    except Exception as e:
-        print(f"⚠️  Error checking trading day: {e}")
-        return False
+    return _get_price_access().is_trading_day(date)
 
 
-def get_all_trading_days(market: str = "us") -> List[str]:
-    """Get all available trading days from merged.jsonl.
+def get_all_trading_days(market: str = "cn") -> List[str]:
+    """Get all available trading days.
+
+    Uses DuckDB as the primary data source with automatic fallback to JSONL.
 
     Args:
-        market: Market type ("us" or "cn")
+        market: Market type (default: "cn" for A-shares)
 
     Returns:
         Sorted list of trading dates in "YYYY-MM-DD" format
     """
-    merged_file_path = get_merged_file_path(market)
-
-    if not merged_file_path.exists():
-        print(f"⚠️  Warning: {merged_file_path} not found")
-        return []
-
-    trading_days = set()
-    try:
-        with open(merged_file_path, "r", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    data = json.loads(line.strip())
-                    time_series = data.get("Time Series (Daily)", {})
-                    # Add all dates from this stock's time series
-                    trading_days.update(time_series.keys())
-                except json.JSONDecodeError:
-                    continue
-        return sorted(list(trading_days))
-    except Exception as e:
-        print(f"⚠️  Error reading trading days: {e}")
-        return []
+    return _get_price_access().get_all_trading_days()
 
 
 def get_stock_name_mapping(market: str = "us") -> Dict[str, str]:
@@ -310,256 +276,60 @@ def format_price_dict_with_names(
     return formatted_dict
 
 
-def get_yesterday_date(today_date: str, merged_path: Optional[str] = None, market: str = "us") -> str:
+def get_yesterday_date(today_date: str, merged_path: Optional[str] = None, market: str = "cn") -> str:
     """
     获取输入日期的上一个交易日或时间点。
-    从 merged.jsonl 读取所有可用的交易时间，然后找到 today_date 的上一个时间。
-    
+
+    Uses DuckDB as the primary data source with automatic fallback to JSONL.
+
     Args:
         today_date: 日期字符串，格式 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS。
-        merged_path: 可选，自定义 merged.jsonl 路径；默认根据 market 参数读取对应市场的 merged.jsonl。
-        market: 市场类型，"us" 为美股，"cn" 为A股
+        merged_path: 可选，自定义 merged.jsonl 路径（仅用于 JSONL fallback）
+        market: 市场类型（默认: "cn" A股）
 
     Returns:
         yesterday_date: 上一个交易日或时间点的字符串，格式与输入一致。
     """
-    # 解析输入日期/时间
-    if ' ' in today_date:
-        input_dt = datetime.strptime(today_date, "%Y-%m-%d %H:%M:%S")
-        date_only = False
-    else:
-        input_dt = datetime.strptime(today_date, "%Y-%m-%d")
-        date_only = True
-    
-    # 获取 merged.jsonl 文件路径
-    merged_file = _resolve_merged_file_path_for_date(today_date, market, merged_path)
-    
-    if not merged_file.exists():
-        # 如果文件不存在，根据输入类型回退
-        print(f"merged.jsonl file does not exist at {merged_file}")
-        if date_only:
-            yesterday_dt = input_dt - timedelta(days=1)
-            while yesterday_dt.weekday() >= 5:
-                yesterday_dt -= timedelta(days=1)
-            return yesterday_dt.strftime("%Y-%m-%d")
-        else:
-            yesterday_dt = input_dt - timedelta(hours=1)
-            return yesterday_dt.strftime("%Y-%m-%d %H:%M:%S")
-    
-    # 从 merged.jsonl 读取所有可用的交易时间
-    all_timestamps = set()
-    
-    with merged_file.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            try:
-                doc = json.loads(line)
-                # 查找所有以 "Time Series" 开头的键
-                for key, value in doc.items():
-                    if key.startswith("Time Series"):
-                        if isinstance(value, dict):
-                            all_timestamps.update(value.keys())
-                        break
-            except Exception:
-                continue
-    
-    if not all_timestamps:
-        # 如果没有找到任何时间戳，根据输入类型回退
-        if date_only:
-            yesterday_dt = input_dt - timedelta(days=1)
-            while yesterday_dt.weekday() >= 5:
-                yesterday_dt -= timedelta(days=1)
-            return yesterday_dt.strftime("%Y-%m-%d")
-        else:
-            yesterday_dt = input_dt - timedelta(hours=1)
-            return yesterday_dt.strftime("%Y-%m-%d %H:%M:%S")
-    
-    # 将所有时间戳转换为 datetime 对象，并找到小于 today_date 的最大时间戳
-    previous_timestamp = None
-    
-    for ts_str in all_timestamps:
-        try:
-            ts_dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-            if ts_dt < input_dt:
-                if previous_timestamp is None or ts_dt > previous_timestamp:
-                    previous_timestamp = ts_dt
-        except Exception:
-            continue
-    
-    # 如果没有找到更早的时间戳，根据输入类型回退
-    if previous_timestamp is None:
-        if date_only:
-            yesterday_dt = input_dt - timedelta(days=1)
-            while yesterday_dt.weekday() >= 5:
-                yesterday_dt -= timedelta(days=1)
-            return yesterday_dt.strftime("%Y-%m-%d")
-        else:
-            yesterday_dt = input_dt - timedelta(hours=1)
-            return yesterday_dt.strftime("%Y-%m-%d %H:%M:%S")
-
-    # 返回结果
-    if date_only:
-        return previous_timestamp.strftime("%Y-%m-%d")
-    else:
-        return previous_timestamp.strftime("%Y-%m-%d %H:%M:%S")
+    return _get_price_access().get_yesterday_date(today_date, merged_path)
 
 
 
 def get_open_prices(
-    today_date: str, symbols: List[str], merged_path: Optional[str] = None, market: str = "us"
+    today_date: str, symbols: List[str], merged_path: Optional[str] = None, market: str = "cn"
 ) -> Dict[str, Optional[float]]:
-    """从 data/merged.jsonl 中读取指定日期与标的的开盘价。
+    """读取指定日期与标的的开盘价。
+
+    Uses DuckDB as the primary data source with automatic fallback to JSONL.
 
     Args:
         today_date: 日期字符串，格式 YYYY-MM-DD或YYYY-MM-DD HH:MM:SS。
         symbols: 需要查询的股票代码列表。
-        merged_path: 可选，自定义 merged.jsonl 路径；默认读取项目根目录下 data/merged.jsonl。
-        market: 市场类型，"us" 为美股，"cn" 为A股
+        merged_path: 可选，自定义 merged.jsonl 路径（仅用于 JSONL fallback）
+        market: 市场类型（默认: "cn" A股）
 
     Returns:
         {symbol_price: open_price 或 None} 的字典；若未找到对应日期或标的，则值为 None。
     """
-    wanted = set(symbols)
-    results: Dict[str, Optional[float]] = {}
-
-    merged_file = _resolve_merged_file_path_for_date(today_date, market, merged_path)
-
-    if not merged_file.exists():
-        return results
-
-    with merged_file.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            try:
-                doc = json.loads(line)
-            except Exception:
-                continue
-            meta = doc.get("Meta Data", {}) if isinstance(doc, dict) else {}
-            sym = meta.get("2. Symbol")
-            if sym not in wanted:
-                continue
-            # 查找所有以 "Time Series" 开头的键
-            series = None
-            for key, value in doc.items():
-                if key.startswith("Time Series"):
-                    series = value
-                    break
-            if not isinstance(series, dict):
-                continue
-            bar = series.get(today_date)
-            
-            if isinstance(bar, dict):
-                open_val = bar.get("1. buy price")
-                
-                try:
-                    results[f"{sym}_price"] = float(open_val) if open_val is not None else None
-                except Exception:
-                    results[f"{sym}_price"] = None
-
-    return results
+    return _get_price_access().get_open_prices(today_date, symbols, merged_path)
 
 
 def get_yesterday_open_and_close_price(
-    today_date: str, symbols: List[str], merged_path: Optional[str] = None, market: str = "us"
+    today_date: str, symbols: List[str], merged_path: Optional[str] = None, market: str = "cn"
 ) -> Tuple[Dict[str, Optional[float]], Dict[str, Optional[float]]]:
-    """从 data/merged.jsonl 中读取指定日期与股票的昨日买入价和卖出价。
+    """读取昨日的买入价和卖出价。
+
+    Uses DuckDB as the primary data source with automatic fallback to JSONL.
 
     Args:
         today_date: 日期字符串，格式 YYYY-MM-DD，代表今天日期。
         symbols: 需要查询的股票代码列表。
-        merged_path: 可选，自定义 merged.jsonl 路径；默认读取项目根目录下 data/merged.jsonl。
-        market: 市场类型，"us" 为美股，"cn" 为A股
+        merged_path: 可选，自定义 merged.jsonl 路径（仅用于 JSONL fallback）
+        market: 市场类型（默认: "cn" A股）
 
     Returns:
         (买入价字典, 卖出价字典) 的元组；若未找到对应日期或标的，则值为 None。
     """
-    wanted = set(symbols)
-    buy_results: Dict[str, Optional[float]] = {}
-    sell_results: Dict[str, Optional[float]] = {}
-
-    merged_file = _resolve_merged_file_path_for_date(today_date, market, merged_path)
-
-    if not merged_file.exists():
-        return buy_results, sell_results
-
-    yesterday_date = get_yesterday_date(today_date, merged_path=merged_path, market=market)
-
-    with merged_file.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            try:
-                doc = json.loads(line)
-            except Exception:
-                continue
-            meta = doc.get("Meta Data", {}) if isinstance(doc, dict) else {}
-            sym = meta.get("2. Symbol")
-            if sym not in wanted:
-                continue
-            # 查找所有以 "Time Series" 开头的键
-            series = None
-            for key, value in doc.items():
-                if key.startswith("Time Series"):
-                    series = value
-                    break
-            if not isinstance(series, dict):
-                continue
-
-            # 尝试获取昨日买入价和卖出价
-            bar = series.get(yesterday_date)
-            if isinstance(bar, dict):
-                buy_val = bar.get("1. buy price")  # 买入价字段
-                sell_val = bar.get("4. sell price")  # 卖出价字段
-
-                try:
-                    buy_price = float(buy_val) if buy_val is not None else None
-                    sell_price = float(sell_val) if sell_val is not None else None
-                    buy_results[f"{sym}_price"] = buy_price
-                    sell_results[f"{sym}_price"] = sell_price
-                except Exception:
-                    buy_results[f"{sym}_price"] = None
-                    sell_results[f"{sym}_price"] = None
-            else:
-                # 如果昨日没有数据，尝试向前查找最近的交易日
-                # raise ValueError(f"No data found for {sym} on {yesterday_date}")
-                # print(f"No data found for {sym} on {yesterday_date}")
-                buy_results[f'{sym}_price'] = None
-                sell_results[f'{sym}_price'] = None
-                # today_dt = datetime.strptime(today_date, "%Y-%m-%d")
-                # yesterday_dt = today_dt - timedelta(days=1)
-                # current_date = yesterday_dt
-                # found_data = False
-                
-                # # 最多向前查找5个交易日
-                # for _ in range(5):
-                #     current_date -= timedelta(days=1)
-                #     # 跳过周末
-                #     while current_date.weekday() >= 5:
-                #         current_date -= timedelta(days=1)
-                    
-                #     check_date = current_date.strftime("%Y-%m-%d")
-                #     bar = series.get(check_date)
-                #     if isinstance(bar, dict):
-                #         buy_val = bar.get("1. buy price")
-                #         sell_val = bar.get("4. sell price")
-                        
-                #         try:
-                #             buy_price = float(buy_val) if buy_val is not None else None
-                #             sell_price = float(sell_val) if sell_val is not None else None
-                #             buy_results[f'{sym}_price'] = buy_price
-                #             sell_results[f'{sym}_price'] = sell_price
-                #             found_data = True
-                #             break
-                #         except Exception:
-                #             continue
-                
-                # if not found_data:
-                #     buy_results[f'{sym}_price'] = None
-                #     sell_results[f'{sym}_price'] = None
-
-    return buy_results, sell_results
+    return _get_price_access().get_yesterday_open_and_close_price(today_date, symbols, merged_path)
 
 
 def get_yesterday_profit(
@@ -615,234 +385,53 @@ def get_yesterday_profit(
 
 def get_today_init_position(today_date: str, signature: str) -> Dict[str, float]:
     """
-    获取今日开盘时的初始持仓（即文件中上一个交易日代表的持仓）。从../data/agent_data/{signature}/position/position.jsonl中读取。
-    如果同一日期有多条记录，选择id最大的记录作为初始持仓。
+    获取今日开盘时的初始持仓（即上一个交易日结束时的持仓）。
+
+    Uses DuckDB as the primary data source with automatic fallback to JSONL.
 
     Args:
         today_date: 日期字符串，格式 YYYY-MM-DD，代表今天日期。
-        signature: 模型名称，用于构建文件路径。
+        signature: 模型名称/Agent签名。
 
     Returns:
         {symbol: weight} 的字典；若未找到对应日期，则返回空字典。
     """
-    from tools.general_tools import get_config_value
-    import os
-
-    base_dir = Path(__file__).resolve().parents[1]
-
-    # Get log_path from config, default to "agent_data" for backward compatibility
-    log_path = get_config_value("LOG_PATH", "./data/agent_data")
-
-    # Handle different path formats:
-    # - If it's an absolute path (like temp directory), use it directly
-    # - If it's a relative path starting with "./data/", remove the prefix and prepend base_dir/data
-    # - Otherwise, treat as relative to base_dir/data
-    if os.path.isabs(log_path):
-        # Absolute path (like temp directory) - use directly
-        position_file = Path(log_path) / signature / "position" / "position.jsonl"
-    else:
-        if log_path.startswith("./data/"):
-            log_path = log_path[7:]  # Remove "./data/" prefix
-        position_file = base_dir / "data" / log_path / signature / "position" / "position.jsonl"
-#     position_file = base_dir / "data" / "agent_data" / signature / "position" / "position.jsonl"
-
-    if not position_file.exists():
-        print(f"Position file {position_file} does not exist")
-        return {}
-    
-    # 获取市场类型，智能判断
-    market = get_market_type()
-    yesterday_date = get_yesterday_date(today_date, market=market)
-    
-    max_id = -1
-    latest_positions = {}
-    all_records = []
-  
-    with position_file.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            try:
-                doc = json.loads(line)
-                record_date = doc.get("date")
-                if record_date and record_date < today_date:
-                    all_records.append(doc)
-            except Exception:
-                continue
-
-    if not all_records:
-        return {}
-
-    # Sort by date (descending) then by id (descending) to get the most recent record
-    all_records.sort(key=lambda x: (x.get("date", ""), x.get("id", 0)), reverse=True)
-
-    return all_records[0].get("positions", {})
+    return _get_position_access().get_today_init_position(today_date, signature)
 
 
 def get_latest_position(today_date: str, signature: str) -> Tuple[Dict[str, float], int]:
     """
-    获取最新持仓。从 ../data/agent_data/{signature}/position/position.jsonl 中读取。
+    获取最新持仓。
+
+    Uses DuckDB as the primary data source with automatic fallback to JSONL.
     优先选择当天 (today_date) 中 id 最大的记录；
     若当天无记录，则回退到上一个交易日，选择该日中 id 最大的记录。
 
     Args:
         today_date: 日期字符串，格式 YYYY-MM-DD，代表今天日期。
-        signature: 模型名称，用于构建文件路径。
+        signature: 模型名称/Agent签名。
 
     Returns:
         (positions, max_id):
           - positions: {symbol: weight} 的字典；若未找到任何记录，则为空字典。
           - max_id: 选中记录的最大 id；若未找到任何记录，则为 -1.
     """
-    from tools.general_tools import get_config_value
-    import os
-
-    base_dir = Path(__file__).resolve().parents[1]
-
-    # Get log_path from config, default to "agent_data" for backward compatibility
-    log_path = get_config_value("LOG_PATH", "./data/agent_data")
-
-    # Handle different path formats:
-    # - If it's an absolute path (like temp directory), use it directly
-    # - If it's a relative path starting with "./data/", remove the prefix and prepend base_dir/data
-    # - Otherwise, treat as relative to base_dir/data
-    if os.path.isabs(log_path):
-        # Absolute path (like temp directory) - use directly
-        position_file = Path(log_path) / signature / "position" / "position.jsonl"
-    else:
-        if log_path.startswith("./data/"):
-            log_path = log_path[7:]  # Remove "./data/" prefix
-        position_file = base_dir / "data" / log_path / signature / "position" / "position.jsonl"
-
-    if not position_file.exists():
-        return {}, -1
-
-    # 获取市场类型，智能判断
-    market = get_market_type()
-    
-    # Step 1: 先查找当天的记录
-    max_id_today = -1
-    latest_positions_today: Dict[str, float] = {}
-    
-    with position_file.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            try:
-                doc = json.loads(line)
-                if doc.get("date") == today_date:
-                    current_id = doc.get("id", -1)
-                    if current_id > max_id_today:
-                        max_id_today = current_id
-                        latest_positions_today = doc.get("positions", {})
-            except Exception:
-                continue
-    
-    # 如果当天有记录，直接返回
-    if max_id_today >= 0 and latest_positions_today:
-        return latest_positions_today, max_id_today
-    
-    # Step 2: 当天没有记录，则回退到上一个交易日
-    prev_date = get_yesterday_date(today_date, market=market)
-    
-    max_id_prev = -1
-    latest_positions_prev: Dict[str, float] = {}
-
-    with position_file.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            try:
-                doc = json.loads(line)
-                if doc.get("date") == prev_date:
-                    current_id = doc.get("id", -1)
-                    if current_id > max_id_prev:
-                        max_id_prev = current_id
-                        latest_positions_prev = doc.get("positions", {})
-            except Exception:
-                continue
-    
-    # 如果前一天也没有记录，尝试找文件中最新的非空记录（按实际时间和id排序）
-    if max_id_prev < 0 or not latest_positions_prev:
-        all_records: List[Dict[str, Any]] = []
-        norm_today = _normalize_timestamp_str(today_date)
-        today_dt = _parse_timestamp_to_dt(norm_today)
-        with position_file.open("r", encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    doc = json.loads(line)
-                    doc_date = doc.get("date")
-                    if not doc_date:
-                        continue
-                    norm_doc_date = _normalize_timestamp_str(doc_date)
-                    doc_dt = _parse_timestamp_to_dt(norm_doc_date)
-                    # 仅考虑早于today_date的记录
-                    if doc_dt < today_dt:
-                        positions = doc.get("positions", {})
-                        # 跳过空持仓记录
-                        if positions:
-                            all_records.append(doc)
-                except Exception:
-                    continue
-        
-        if all_records:
-            # 先按实际时间排序，再按id排序，取最新的一条
-            all_records.sort(
-                key=lambda x: (
-                    _parse_timestamp_to_dt(_normalize_timestamp_str(x.get("date", "1900-01-01"))),
-                    x.get("id", 0),
-                ),
-                reverse=True,
-            )
-            latest_positions_prev = all_records[0].get("positions", {})
-            max_id_prev = all_records[0].get("id", -1)
-    
-    return latest_positions_prev, max_id_prev
+    return _get_position_access().get_latest_position(today_date, signature)
 
 def add_no_trade_record(today_date: str, signature: str):
     """
-    添加不交易记录。从 ../data/agent_data/{signature}/position/position.jsonl 中前一日最后一条持仓，并更新在今日的position.jsonl文件中。
+    添加不交易记录。
+
+    Uses DuckDB and JSONL dual-write strategy for redundancy.
+
     Args:
         today_date: 日期字符串，格式 YYYY-MM-DD，代表今天日期。
-        signature: 模型名称，用于构建文件路径。
+        signature: 模型名称/Agent签名。
 
     Returns:
         None
     """
-    save_item = {}
-    current_position, current_action_id = get_latest_position(today_date, signature)
-    
-    save_item["date"] = today_date
-    save_item["id"] = current_action_id + 1
-    save_item["this_action"] = {"action": "no_trade", "symbol": "", "amount": 0}
-
-    save_item["positions"] = current_position
-
-    from tools.general_tools import get_config_value
-    import os
-
-    base_dir = Path(__file__).resolve().parents[1]
-
-    # Get log_path from config, default to "agent_data" for backward compatibility
-    log_path = get_config_value("LOG_PATH", "./data/agent_data")
-
-    # Handle different path formats:
-    # - If it's an absolute path (like temp directory), use it directly
-    # - If it's a relative path starting with "./data/", remove the prefix and prepend base_dir/data
-    # - Otherwise, treat as relative to base_dir/data
-    if os.path.isabs(log_path):
-        # Absolute path (like temp directory) - use directly
-        position_file = Path(log_path) / signature / "position" / "position.jsonl"
-    else:
-        if log_path.startswith("./data/"):
-            log_path = log_path[7:]  # Remove "./data/" prefix
-        position_file = base_dir / "data" / log_path / signature / "position" / "position.jsonl"
-
-    with position_file.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(save_item) + "\n")
-    return
+    _get_position_access().add_no_trade_record(today_date, signature)
 
 
 if __name__ == "__main__":
