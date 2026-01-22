@@ -22,28 +22,25 @@ class MCPServiceManager:
         self.services = {}
         self.running = True
 
-        # Set default ports
+        # Set default ports (A-stock services only)
         self.ports = {
             "math": int(os.getenv("MATH_HTTP_PORT", "8000")),
             "search": int(os.getenv("SEARCH_HTTP_PORT", "8001")),
             "trade": int(os.getenv("TRADE_HTTP_PORT", "8002")),
             "price": int(os.getenv("GETPRICE_HTTP_PORT", "8003")),
-            "crypto": int(os.getenv("CRYPTO_HTTP_PORT", "8005")),
         }
 
         # Service configurations
         mcp_server_dir = os.path.dirname(os.path.abspath(__file__))
 
-        # 新闻源选择：支持 alphavantage, finnhub, akshare, jina
+        # 新闻源选择：支持 akshare（A股）和 jina（通用搜索）
         # 通过环境变量 NEWS_SOURCE 配置，默认使用 akshare（A股推荐）
         news_source = os.getenv("NEWS_SOURCE", "akshare").lower()
         news_scripts = {
             "akshare": "tool_akshare_news.py",      # A股推荐，免费无限制
-            "alphavantage": "tool_alphavantage_news.py",  # 美股，需要 API Key
-            "finnhub": "tool_finnhub_news.py",      # 美股，需要 API Key
             "jina": "tool_jina_search.py",          # 通用网页搜索
         }
-        news_script = news_scripts.get(news_source, "tool_alphavantage_news.py")
+        news_script = news_scripts.get(news_source, "tool_akshare_news.py")
         print(f"📰 News source: {news_source} ({news_script})")
 
         self.service_configs = {
@@ -51,7 +48,6 @@ class MCPServiceManager:
             "search": {"script": os.path.join(mcp_server_dir, news_script), "name": "Search", "port": self.ports["search"]},
             "trade": {"script": os.path.join(mcp_server_dir, "tool_trade.py"), "name": "TradeTools", "port": self.ports["trade"]},
             "price": {"script": os.path.join(mcp_server_dir, "tool_get_price_local.py"), "name": "LocalPrices", "port": self.ports["price"]},
-            "crypto": {"script": os.path.join(mcp_server_dir, "tool_crypto_trade.py"), "name": "CryptoTradeTools", "port": self.ports["crypto"]},
         }
 
         # Create logs directory

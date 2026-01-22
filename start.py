@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-AI-Trader Unified Startup Script
+AI-Trader Unified Startup Script (A-Stock Only)
 Consolidates data preparation, MCP services, and trading agent into one script.
 
 Usage:
-    python start.py                           # Default: US stock daily
-    python start.py -m cn -f hourly           # A-stock hourly
-    python start.py -m crypto                 # Crypto
+    python start.py                           # Default: A-stock daily
+    python start.py -f hourly                 # A-stock hourly
     python start.py --skip-data               # Skip data preparation
     python start.py --only-mcp                # Only start MCP services
     python start.py --only-agent              # Only start agent (MCP must be running)
@@ -85,56 +84,22 @@ def activate_venv():
     return True
 
 
-def get_config_path(market: str, freq: str) -> Path:
-    """Get config file path based on market and frequency"""
+def get_config_path(freq: str) -> Path:
+    """Get config file path based on frequency (A-stock only)"""
     config_map = {
-        ("us", "daily"): "configs/default_config.json",
-        ("us", "hourly"): "configs/default_hour_config.json",
-        ("cn", "daily"): "configs/astock_config.json",
-        ("cn", "hourly"): "configs/astock_hour_config.json",
-        ("crypto", "daily"): "configs/default_crypto_config.json",
-        ("crypto", "hourly"): "configs/default_crypto_config.json",  # Crypto doesn't have hourly
+        "daily": "configs/astock_config.json",
+        "hourly": "configs/astock_hour_config.json",
     }
 
-    config_file = config_map.get((market, freq))
+    config_file = config_map.get(freq)
     if not config_file:
-        log(f"Unknown market/freq combination: {market}/{freq}", "error")
+        log(f"Unknown frequency: {freq}", "error")
         return None
 
     return PROJECT_ROOT / config_file
 
 
-def prepare_data_us(freq: str, debug: bool = False):
-    """Prepare US stock data"""
-    log("Preparing US stock data...", "step")
-    data_dir = PROJECT_ROOT / "data"
-
-    if freq == "daily":
-        scripts = ["get_daily_price.py", "merge_jsonl.py"]
-    else:
-        scripts = ["get_interdaily_price.py", "merge_jsonl.py"]
-
-    for script in scripts:
-        script_path = data_dir / script
-        if not script_path.exists():
-            log(f"Script not found: {script_path}", "error")
-            return False
-
-        log(f"Running {script}...", "info")
-        success, _, stderr = run_command(
-            [sys.executable, str(script_path)],
-            cwd=data_dir,
-            debug=debug
-        )
-        if not success:
-            log(f"Failed to run {script}: {stderr}", "error")
-            return False
-
-    log("US stock data prepared", "success")
-    return True
-
-
-def prepare_data_cn(freq: str, debug: bool = False):
+def prepare_data(freq: str, debug: bool = False):
     """Prepare A-stock data"""
     log("Preparing A-stock data...", "step")
     data_dir = PROJECT_ROOT / "data" / "A_stock"
@@ -170,46 +135,6 @@ def prepare_data_cn(freq: str, debug: bool = False):
 
     log("A-stock data prepared", "success")
     return True
-
-
-def prepare_data_crypto(debug: bool = False):
-    """Prepare crypto data"""
-    log("Preparing crypto data...", "step")
-    data_dir = PROJECT_ROOT / "data" / "crypto"
-
-    scripts = ["get_daily_price_crypto.py", "merge_crypto_jsonl.py"]
-
-    for script in scripts:
-        script_path = data_dir / script
-        if not script_path.exists():
-            log(f"Script not found: {script_path}", "error")
-            return False
-
-        log(f"Running {script}...", "info")
-        success, _, stderr = run_command(
-            [sys.executable, str(script_path)],
-            cwd=data_dir,
-            debug=debug
-        )
-        if not success:
-            log(f"Failed to run {script}: {stderr}", "error")
-            return False
-
-    log("Crypto data prepared", "success")
-    return True
-
-
-def prepare_data(market: str, freq: str, debug: bool = False):
-    """Prepare data based on market type"""
-    if market == "us":
-        return prepare_data_us(freq, debug)
-    elif market == "cn":
-        return prepare_data_cn(freq, debug)
-    elif market == "crypto":
-        return prepare_data_crypto(debug)
-    else:
-        log(f"Unknown market: {market}", "error")
-        return False
 
 
 def start_mcp_services(background: bool = True, debug: bool = False):
@@ -325,14 +250,12 @@ def stop_process(process: subprocess.Popen, name: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="AI-Trader Unified Startup Script",
+        description="AI-Trader Unified Startup Script (A-Stock Only)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python start.py                       # US stock daily trading
-  python start.py -m cn                 # A-stock daily trading
-  python start.py -m cn -f hourly       # A-stock hourly trading
-  python start.py -m crypto             # Crypto trading
+  python start.py                       # A-stock daily trading
+  python start.py -f hourly             # A-stock hourly trading
   python start.py --skip-data           # Skip data preparation
   python start.py --only-mcp            # Only start MCP services
   python start.py --only-agent          # Only start agent
@@ -340,13 +263,6 @@ Examples:
   python start.py --ui                  # Also start web UI
   python start.py --debug               # Enable debug output
         """,
-    )
-
-    parser.add_argument(
-        "-m", "--market",
-        choices=["us", "cn", "crypto"],
-        default="us",
-        help="Market type: us (US stock), cn (A-stock), crypto (default: us)",
     )
 
     parser.add_argument(
@@ -432,11 +348,11 @@ Examples:
         if not config_path.is_absolute():
             config_path = PROJECT_ROOT / config_path
     else:
-        config_path = get_config_path(args.market, args.freq)
+        config_path = get_config_path(args.freq)
         if not config_path:
             return 1
 
-    log(f"Market: {args.market.upper()}, Frequency: {args.freq}", "info")
+    log(f"Market: A-Stock (CN), Frequency: {args.freq}", "info")
     log(f"Config: {config_path}", "info")
 
     mcp_process = None
@@ -461,7 +377,7 @@ Examples:
             return 0
 
         if args.only_data:
-            if not prepare_data(args.market, args.freq, args.debug):
+            if not prepare_data(args.freq, args.debug):
                 return 1
             log("Data preparation complete", "success")
             return 0
@@ -475,7 +391,7 @@ Examples:
 
         # Step 1: Data preparation
         if not args.skip_data:
-            if not prepare_data(args.market, args.freq, args.debug):
+            if not prepare_data(args.freq, args.debug):
                 log("Data preparation failed, but continuing...", "warning")
         else:
             log("Skipping data preparation", "info")

@@ -46,134 +46,15 @@ def _parse_timestamp_to_dt(ts: str) -> datetime:
 
 def get_market_type() -> str:
     """
-    智能获取市场类型，支持多种检测方式：
-    1. 优先从配置中读取 MARKET
-    2. 如果未设置，则根据 LOG_PATH 推断（agent_data_astock -> cn, agent_data_crypto -> crypto, agent_data -> us）
-    3. 最后默认为 us
+    获取市场类型（仅支持A股）
 
     Returns:
-        "cn" for A-shares market, "us" for US market, "crypto" for cryptocurrency market
+        "cn" for A-shares market
     """
-    # 方式1: 从配置读取
-    market = get_config_value("MARKET", None)
-    if market in ["cn", "us", "crypto"]:
-        return market
-
-    # 方式2: 根据 LOG_PATH 推断
-    log_path = get_config_value("LOG_PATH", "./data/agent_data")
-    if "astock" in log_path.lower() or "a_stock" in log_path.lower():
-        return "cn"
-    elif "crypto" in log_path.lower():
-        return "crypto"
-
-    # 方式3: 默认为美股
-    return "us"
+    return "cn"
 
 
-all_nasdaq_100_symbols = [
-    "NVDA",
-    "MSFT",
-    "AAPL",
-    "GOOG",
-    "GOOGL",
-    "AMZN",
-    "META",
-    "AVGO",
-    "TSLA",
-    "NFLX",
-    "PLTR",
-    "COST",
-    "ASML",
-    "AMD",
-    "CSCO",
-    "AZN",
-    "TMUS",
-    "MU",
-    "LIN",
-    "PEP",
-    "SHOP",
-    "APP",
-    "INTU",
-    "AMAT",
-    "LRCX",
-    "PDD",
-    "QCOM",
-    "ARM",
-    "INTC",
-    "BKNG",
-    "AMGN",
-    "TXN",
-    "ISRG",
-    "GILD",
-    "KLAC",
-    "PANW",
-    "ADBE",
-    "HON",
-    "CRWD",
-    "CEG",
-    "ADI",
-    "ADP",
-    "DASH",
-    "CMCSA",
-    "VRTX",
-    "MELI",
-    "SBUX",
-    "CDNS",
-    "ORLY",
-    "SNPS",
-    "MSTR",
-    "MDLZ",
-    "ABNB",
-    "MRVL",
-    "CTAS",
-    "TRI",
-    "MAR",
-    "MNST",
-    "CSX",
-    "ADSK",
-    "PYPL",
-    "FTNT",
-    "AEP",
-    "WDAY",
-    "REGN",
-    "ROP",
-    "NXPI",
-    "DDOG",
-    "AXON",
-    "ROST",
-    "IDXX",
-    "EA",
-    "PCAR",
-    "FAST",
-    "EXC",
-    "TTWO",
-    "XEL",
-    "ZS",
-    "PAYX",
-    "WBD",
-    "BKR",
-    "CPRT",
-    "CCEP",
-    "FANG",
-    "TEAM",
-    "CHTR",
-    "KDP",
-    "MCHP",
-    "GEHC",
-    "VRSK",
-    "CTSH",
-    "CSGP",
-    "KHC",
-    "ODFL",
-    "DXCM",
-    "TTD",
-    "ON",
-    "BIIB",
-    "LULU",
-    "CDW",
-    "GFS",
-]
-
+# SSE 50 股票代码列表 (上证50成分股)
 all_sse_50_symbols = [
     "600519.SH",
     "601318.SH",
@@ -228,22 +109,17 @@ all_sse_50_symbols = [
 ]
 
 
-def get_merged_file_path(market: str = "us") -> Path:
-    """Get merged.jsonl path based on market type.
+def get_merged_file_path(market: str = "cn") -> Path:
+    """Get merged.jsonl path for A-stock market.
 
     Args:
-        market: Market type, "us" for US stocks, "cn" for A-shares, "crypto" for cryptocurrencies
+        market: Market type (only "cn" for A-shares is supported)
 
     Returns:
         Path object pointing to the merged.jsonl file
     """
     base_dir = Path(__file__).resolve().parents[1]
-    if market == "cn":
-        return base_dir / "data" / "A_stock" / "merged.jsonl"
-    elif market == "crypto":
-        return base_dir / "data" / "crypto" / "crypto_merged.jsonl"
-    else:
-        return base_dir / "data" / "merged.jsonl"
+    return base_dir / "data" / "A_stock" / "merged.jsonl"
 
 def _resolve_merged_file_path_for_date(
     today_date: Optional[str], market: str, merged_path: Optional[str] = None
@@ -695,27 +571,27 @@ def get_yesterday_profit(
 ) -> Dict[str, float]:
     """
     获取持仓收益（适用于日线和小时级交易）
-    
+
     收益计算方式为：(前一时间点收盘价 - 前一时间点开盘价) × 当前持仓数量
-    
+
     对于日线交易：计算昨日的收益
     对于小时级交易：计算上一小时的收益
-    
+
     Args:
         today_date: 日期/时间字符串，格式 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS
         yesterday_buy_prices: 前一时间点开盘价格字典，格式为 {symbol_price: price}
         yesterday_sell_prices: 前一时间点收盘价格字典，格式为 {symbol_price: price}
         yesterday_init_position: 前一时间点初始持仓字典，格式为 {symbol: quantity}
-        stock_symbols: 股票代码列表，默认为 all_nasdaq_100_symbols
+        stock_symbols: 股票代码列表，默认为 all_sse_50_symbols
 
     Returns:
         {symbol: profit} 的字典；若未找到对应日期或标的，则值为 0.0。
     """
     profit_dict = {}
 
-    # 使用传入的股票列表或默认的纳斯达克100列表
+    # 使用传入的股票列表或默认的上证50列表
     if stock_symbols is None:
-        stock_symbols = all_nasdaq_100_symbols
+        stock_symbols = all_sse_50_symbols
 
     # 遍历所有股票代码
     for symbol in stock_symbols:

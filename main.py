@@ -8,20 +8,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from prompts.agent_prompt import all_nasdaq_100_symbols
 # Import tools and prompts
 from tools.general_tools import get_config_value, write_config_value
 
-# Agent class mapping table - for dynamic import and instantiation
+# Agent class mapping table - for dynamic import and instantiation (A-stock only)
 AGENT_REGISTRY = {
-    "BaseAgent": {
-        "module": "agent.base_agent.base_agent",
-        "class": "BaseAgent"
-    },
-    "BaseAgent_Hour": {
-        "module": "agent.base_agent.base_agent_hour",
-        "class": "BaseAgent_Hour"
-    },
     "BaseAgentAStock": {
         "module": "agent.base_agent_astock.base_agent_astock",
         "class": "BaseAgentAStock"
@@ -29,10 +20,6 @@ AGENT_REGISTRY = {
     "BaseAgentAStock_Hour": {
         "module": "agent.base_agent_astock.base_agent_astock_hour",
         "class": "BaseAgentAStock_Hour"
-    },
-    "BaseAgentCrypto": {
-        "module": "agent.base_agent_crypto.base_agent_crypto",
-        "class": "BaseAgentCrypto"
     }
 }
 
@@ -84,8 +71,8 @@ def load_config(config_path=None):
         dict: Configuration dictionary
     """
     if config_path is None:
-        # Default configuration file path
-        config_path = Path(__file__).parent / "configs" / "default_config.json"
+        # Default configuration file path (A-stock)
+        config_path = Path(__file__).parent / "configs" / "astock_config.json"
     else:
         config_path = Path(config_path)
 
@@ -123,20 +110,9 @@ async def main(config_path=None):
         print(str(e))
         exit(1)
 
-    # Get market type from configuration
-    market = config.get("market", "us")
-    # Auto-detect market from agent_type (BaseAgentAStock always uses CN market)
-    if agent_type == "BaseAgentAStock" or agent_type == "BaseAgentAStock_Hour":
-        market = "cn"
-    elif agent_type == "BaseAgentCrypto":
-        market = "crypto"
-
-    if market == "crypto":
-        print(f"🌍 Market type: Cryptocurrency (24/7 trading)")
-    elif market == "cn":
-        print(f"🌍 Market type: A-shares (China)")
-    else:
-        print(f"🌍 Market type: US stocks")
+    # A-stock market only
+    market = "cn"
+    print(f"🌍 Market type: A-shares (China)")
 
     # Get date range from configuration file
     INIT_DATE = config["date_range"]["init_date"]
@@ -238,49 +214,24 @@ async def main(config_path=None):
         
         print(f"✅ Runtime config initialized: SIGNATURE={signature}, MARKET={market}")
 
-        # Select symbols based on agent type and market
-        # Crypto agents don't use stock_symbols parameter
-        if agent_type == "BaseAgentCrypto":
-            stock_symbols = None  # Crypto agent uses its own crypto_symbols
-        elif agent_type == "BaseAgentAStock" or agent_type == "BaseAgentAStock_Hour":
-            stock_symbols = None  # Let BaseAgentAStock use its default SSE 50
-        elif market == "cn":
-            from prompts.agent_prompt import all_sse_50_symbols
-
-            stock_symbols = all_sse_50_symbols
-        else:
-            stock_symbols = all_nasdaq_100_symbols
+        # A-stock agents use their default SSE 50 symbols
+        stock_symbols = None
 
         try:
             # Dynamically create Agent instance
-            # Crypto agents have different parameter requirements
-            if agent_type == "BaseAgentCrypto":
-                agent = AgentClass(
-                    signature=signature,
-                    basemodel=basemodel,
-                    log_path=log_path,
-                    max_steps=max_steps,
-                    max_retries=max_retries,
-                    base_delay=base_delay,
-                    initial_cash=initial_cash,
-                    init_date=INIT_DATE,
-                    openai_base_url=openai_base_url,
-                    openai_api_key=openai_api_key
-                )
-            else:
-                agent = AgentClass(
-                    signature=signature,
-                    basemodel=basemodel,
-                    stock_symbols=stock_symbols,
-                    log_path=log_path,
-                    max_steps=max_steps,
-                    max_retries=max_retries,
-                    base_delay=base_delay,
-                    initial_cash=initial_cash,
-                    init_date=INIT_DATE,
-                    openai_base_url=openai_base_url,
-                    openai_api_key=openai_api_key
-                )
+            agent = AgentClass(
+                signature=signature,
+                basemodel=basemodel,
+                stock_symbols=stock_symbols,
+                log_path=log_path,
+                max_steps=max_steps,
+                max_retries=max_retries,
+                base_delay=base_delay,
+                initial_cash=initial_cash,
+                init_date=INIT_DATE,
+                openai_base_url=openai_base_url,
+                openai_api_key=openai_api_key
+            )
 
             print(f"✅ {agent_type} instance created successfully: {agent}")
 
@@ -292,25 +243,11 @@ async def main(config_path=None):
 
             # Display final position summary
             summary = agent.get_position_summary()
-            # Get currency symbol from agent's actual market (more accurate)
-            if agent.market == "crypto":
-                currency_symbol = "USDT"
-            elif agent.market == "cn":
-                currency_symbol = "¥"
-            else:
-                currency_symbol = "$"
+            currency_symbol = "¥"  # A-stock uses CNY
             print(f"📊 Final position summary:")
             print(f"   - Latest date: {summary.get('latest_date')}")
             print(f"   - Total records: {summary.get('total_records')}")
             print(f"   - Cash balance: {currency_symbol}{summary.get('positions', {}).get('CASH', 0):,.2f}")
-
-            # Show crypto positions if this is a crypto agent
-            if agent.market == "crypto" and hasattr(agent, 'crypto_symbols'):
-                crypto_positions = {k: v for k, v in summary.get('positions', {}).items() if k.endswith('-USDT') and v > 0}
-                if crypto_positions:
-                    print(f"   - Crypto positions:")
-                    for symbol, amount in crypto_positions.items():
-                        print(f"     • {symbol}: {amount}")
 
         except Exception as e:
             print(f"❌ Error processing model {model_name} ({signature}): {str(e)}")
@@ -337,6 +274,6 @@ if __name__ == "__main__":
     if config_path:
         print(f"📄 Using specified configuration file: {config_path}")
     else:
-        print(f"📄 Using default configuration file: configs/default_config.json")
+        print(f"📄 Using default configuration file: configs/astock_config.json")
 
     asyncio.run(main(config_path))
