@@ -85,18 +85,8 @@ def activate_venv():
 
 
 def get_config_path(freq: str) -> Path:
-    """Get config file path based on frequency (A-stock only)"""
-    config_map = {
-        "daily": "configs/astock_config.json",
-        "hourly": "configs/astock_hour_config.json",
-    }
-
-    config_file = config_map.get(freq)
-    if not config_file:
-        log(f"Unknown frequency: {freq}", "error")
-        return None
-
-    return PROJECT_ROOT / config_file
+    """Get config file path (unified config for all frequencies)"""
+    return PROJECT_ROOT / "configs" / "config.json"
 
 
 def prepare_data(freq: str, debug: bool = False):
@@ -180,9 +170,9 @@ def start_mcp_services(background: bool = True, debug: bool = False):
         return None
 
 
-def start_agent(config_path: Path, debug: bool = False):
+def start_agent(config_path: Path, freq: str = "daily", debug: bool = False):
     """Start trading agent"""
-    log(f"Starting trading agent with config: {config_path.name}", "step")
+    log(f"Starting trading agent with config: {config_path.name} (frequency: {freq})", "step")
 
     main_script = PROJECT_ROOT / "main.py"
     if not main_script.exists():
@@ -195,7 +185,7 @@ def start_agent(config_path: Path, debug: bool = False):
 
     try:
         subprocess.run(
-            [sys.executable, str(main_script), str(config_path)],
+            [sys.executable, str(main_script), str(config_path), "-f", freq],
             cwd=PROJECT_ROOT,
         )
         return True
@@ -215,12 +205,6 @@ def start_ui(debug: bool = False):
     if not docs_dir.exists():
         log(f"Docs directory not found: {docs_dir}", "error")
         return None
-
-    # Sync frontend config first
-    sync_script = PROJECT_ROOT / "scripts" / "sync_frontend_config.py"
-    if sync_script.exists():
-        log("Syncing frontend config...", "info")
-        run_command([sys.executable, str(sync_script)], cwd=PROJECT_ROOT, debug=debug)
 
     try:
         process = subprocess.Popen(
@@ -383,7 +367,7 @@ Examples:
             return 0
 
         if args.only_agent:
-            if not start_agent(config_path, args.debug):
+            if not start_agent(config_path, args.freq, args.debug):
                 return 1
             return 0
 
@@ -407,7 +391,7 @@ Examples:
 
         # Step 3: Agent
         if not args.skip_agent:
-            if not start_agent(config_path, args.debug):
+            if not start_agent(config_path, args.freq, args.debug):
                 log("Agent execution failed", "error")
                 cleanup()
                 return 1

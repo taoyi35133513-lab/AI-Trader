@@ -57,10 +57,11 @@ def get_data_dir(market: str) -> Path:
     return settings.project_root / "data" / data_dir
 
 
-def load_config_json(config_name: str = "astock_config.json") -> dict:
+def load_config_json(config_name: str = "config.json") -> dict:
     """加载配置文件"""
     config_path = settings.project_root / "configs" / config_name
     if config_path.exists():
         with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
+    print(f"Warning: Config file not found: {config_path}")
     return {}

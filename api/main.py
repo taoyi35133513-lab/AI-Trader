@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.config import settings
-from api.routers import agents, benchmarks, dashboard, prices
+from api.routers import agents, benchmarks, config, dashboard, prices
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -31,6 +31,7 @@ app.include_router(agents.router, prefix="/api/agents", tags=["Agents"])
 app.include_router(prices.router, prefix="/api/prices", tags=["Prices"])
 app.include_router(benchmarks.router, prefix="/api/benchmarks", tags=["Benchmarks"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
+app.include_router(config.router, prefix="/api/config", tags=["Config"])
 
 
 @app.get("/")
