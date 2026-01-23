@@ -33,15 +33,8 @@ class MCPServiceManager:
         # Service configurations
         mcp_server_dir = os.path.dirname(os.path.abspath(__file__))
 
-        # 新闻源选择：支持 akshare（A股）和 jina（通用搜索）
-        # 通过环境变量 NEWS_SOURCE 配置，默认使用 akshare（A股推荐）
-        news_source = os.getenv("NEWS_SOURCE", "akshare").lower()
-        news_scripts = {
-            "akshare": "tool_akshare_news.py",      # A股推荐，免费无限制
-            "jina": "tool_jina_search.py",          # 通用网页搜索
-        }
-        news_script = news_scripts.get(news_source, "tool_akshare_news.py")
-        print(f"📰 News source: {news_source} ({news_script})")
+        # 新闻源使用 akshare（A股推荐，免费无限制）
+        news_script = "tool_akshare_news.py"
 
         self.service_configs = {
             "math": {"script": os.path.join(mcp_server_dir, "tool_math.py"), "name": "Math", "port": self.ports["math"]},

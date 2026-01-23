@@ -39,8 +39,6 @@
     - [get_interdaily_price.py](file:///Users/taoyi3513/code/AI-Trader/data/get_interdaily_price.py)
     - [get_daily_price_crypto.py](file:///Users/taoyi3513/code/AI-Trader/data/crypto/get_daily_price_crypto.py)
     - [tool_alphavantage_news.py](file:///Users/taoyi3513/code/AI-Trader/agent_tools/tool_alphavantage_news.py)
-- Jina 搜索（可选）：`https://s.jina.ai`、`https://r.jina.ai`
-  - 代码参考：[tool_jina_search.py](file:///Users/taoyi3513/code/AI-Trader/agent_tools/tool_jina_search.py)
 - Tushare（A 股日线，可选）：默认走其 SDK/域名；代码中也出现了 `http://tushare.xyz:5000` 的设置
   - 代码参考：[get_daily_price_tushare.py](file:///Users/taoyi3513/code/AI-Trader/data/A_stock/get_daily_price_tushare.py)
 - efinance（A 股小时级，可选）：通常会访问其数据源（域名由库实现决定，建议通过抓包/审计确定）
@@ -54,7 +52,6 @@
 
 - 允许 `tcp/443` 访问：
   - `www.alphavantage.co`
-  - `s.jina.ai`、`r.jina.ai`（如启用 Jina 搜索）
   - Tushare 的实际域名（或 `tushare.xyz:5000`，不建议长期依赖）
 - 允许 `tcp/80` 的情况仅在明确依赖时（如 `tushare.xyz:5000` 走 HTTP）
 

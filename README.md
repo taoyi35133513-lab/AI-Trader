@@ -76,7 +76,7 @@ You just need to submit a PR that includes at least: `./agent/{your_strategy}.py
 - 🛠️ **Pure Tool-Driven Architecture**: Built on MCP toolchain, enabling AI to complete all trading operations through standardized tool calls
 - 🏆 **Multi-Model Competition Arena**: Deploy multiple AI models (GPT, Claude, Qwen, etc.) for competitive trading
 - 📊 **Real-Time Performance Analytics**: Comprehensive trading records, position monitoring, and profit/loss analysis
-- 🔍 **Intelligent Market Intelligence**: Integrated Jina search for real-time market news and financial reports
+- 🔍 **Intelligent Market Intelligence**: Integrated market news search for real-time financial reports
 - ⚡ **MCP Toolchain Integration**: Modular tool ecosystem based on Model Context Protocol
 - 🔌 **Extensible Strategy Framework**: Support for third-party strategies and custom AI agent integration
 - ⏰ **Historical Replay Capability**: Time-period replay functionality with automatic future information filtering
@@ -92,7 +92,7 @@ Each AI model starts with $10,000, 100,000¥, or 50,000 USDT to trade NASDAQ 100
   - SSE 50 component stocks
   - Major cryptocurrencies (BTC, ETH, XRP, SOL, ADA, SUI, LINK, AVAX, LTC, DOT)
 - ⏰ **Trading Schedule**: Entire Week for cryptocurrencies, weekday market hours for stocks with historical simulation support
-- 📊 **Data Integration**: Alpha Vantage API combined with Jina AI market intelligence
+- 📊 **Data Integration**: Alpha Vantage API combined with AKShare market intelligence
 - 🔄 **Time Management**: Historical period replay with automated future information filtering
 
 ---
@@ -192,7 +192,7 @@ AI-Trader Bench/
 │   ├── agent_tools/
 │   │   ├── tool_trade.py          # 💰 Trade execution (auto-adapts market rules)
 │   │   ├── tool_get_price_local.py # 📊 Price queries (supports US + A-shares)
-│   │   ├── tool_jina_search.py   # 🔍 Information search
+│   │   ├── tool_akshare_news.py  # 🔍 Information search
 │   │   ├── tool_math.py           # 🧮 Mathematical calculations
 │   │   └── start_mcp_services.py  # 🚀 MCP service startup script
 │   └── tools/                     # 🔧 Auxiliary tools
@@ -320,7 +320,6 @@ AI-Trader Bench/
 - **API Keys**: 
   - OpenAI (for AI models)
   - Alpha Vantage (for NASDAQ 100 data)
-  - Jina AI (for market information search)
   - Tushare (for A-share market data, optional)
 
 ### ⚡ One-Click Installation
@@ -349,7 +348,6 @@ OPENAI_API_KEY=your_openai_key
 
 # 📊 Data Source Configuration
 ALPHAADVANTAGE_API_KEY=your_alpha_vantage_key  # For NASDAQ 100 and cryptocurrency data
-JINA_API_KEY=your_jina_api_key
 TUSHARE_TOKEN=your_tushare_token               # For A-share data
 
 # ⚙️ System Configuration
@@ -378,131 +376,209 @@ pip install langchain langchain-openai langchain-mcp-adapters fastmcp python-dot
 
 ## 🎮 Running Guide
 
-### 🚀 Quick Start with Scripts
+This guide covers the complete workflow from data preparation to running trading agents, including both historical backtesting and real-time trading modes.
 
-We provide convenient shell scripts in the `scripts/` directory for easy startup:
+### 🚀 Quick Start (Unified Script)
 
-#### 🇺🇸 US Market (NASDAQ 100)
+The `start.py` script provides a one-command solution for the entire workflow:
+
 ```bash
-# One-click startup (complete workflow)
-bash scripts/main.sh
+# A-stock daily trading (default)
+python start.py
 
-# Or run step by step:
-bash scripts/main_step1.sh  # Step 1: Prepare data
-bash scripts/main_step2.sh  # Step 2: Start MCP services
-bash scripts/main_step3.sh  # Step 3: Run trading agent
+# A-stock hourly trading
+python start.py -f hourly
+
+# Skip data preparation (if data already exists)
+python start.py --skip-data
+
+# Only start MCP services (manual agent control)
+python start.py --only-mcp
+
+# Only start agent (assumes MCP services are running)
+python start.py --only-agent
+
+# Start web UI after agent completes
+python start.py --ui
 ```
+
+### 📋 Shell Scripts (Alternative)
+
+We provide convenient shell scripts in the `scripts/` directory:
 
 #### 🇨🇳 A-Share Market (SSE 50)
 ```bash
-# Run step by step:
 bash scripts/main_a_stock_step1.sh  # Step 1: Prepare A-share data
 bash scripts/main_a_stock_step2.sh  # Step 2: Start MCP services
 bash scripts/main_a_stock_step3.sh  # Step 3: Run A-share trading agent
 ```
 
-#### ₿ Cryptocurrency Market (BITWISE10)
-```bash
-# Run step by step:
-bash scripts/main_crypto_step1.sh  # Step 1: Prepare crypto data
-bash scripts/main_crypto_step2.sh  # Step 2: Start MCP services
-bash scripts/main_crypto_step3.sh  # Step 3: Run crypto trading agent
-```
-
 #### 🌐 Web UI
 ```bash
-# Start web interface
-bash scripts/start_ui.sh
-# Visit: http://localhost:8888
+bash scripts/start_ui.sh  # Visit: http://localhost:8888
 ```
 
 ---
 
-### 📋 Manual Setup Guide
-
-If you prefer to run commands manually, follow these steps:
-
 ### 📊 Step 1: Data Preparation
-
-#### 🇺🇸 NASDAQ 100 Data
-
-```bash
-# 📈 Get NASDAQ 100 stock data
-cd data
-python get_daily_price.py
-
-# 🔄 Merge data into unified format
-python merge_jsonl.py
-```
 
 #### 🇨🇳 A-Share Market Data (SSE 50)
 
 ```bash
-# 📈 Get Chinese A-share daily market data (SSE 50 Index)
 cd data/A_stock
 
-# 📈 Method 1: Get daily data using Tushare API (Recommended)
+# Method 1: Get daily data using Tushare API (Recommended)
 python get_daily_price_tushare.py
 python merge_jsonl_tushare.py
+# Output: data/A_stock/merged.jsonl
 
-# 📈 Method 2: Get daily data using Alpha Vantage API (Alternative)
+# Method 2: Get daily data using Alpha Vantage API (Alternative)
 python get_daily_price_alphavantage.py
 python merge_jsonl_alphavantage.py
 
-# 📊 Daily data will be saved to: data/A_stock/merged.jsonl
-
-# ⏰ Get 60-minute K-line data (hourly trading)
+# Hourly data (for hourly trading)
 python get_interdaily_price_astock.py
 python merge_jsonl_hourly.py
-
-# 📊 Hourly data will be saved to: data/A_stock/merged_hourly.jsonl
+# Output: data/A_stock/merged_hourly.jsonl
 ```
 
-#### ₿ Cryptocurrency Market Data (BITWISE10)
+#### 🗄️ DuckDB Database Import (Optional)
+
+For better performance, import data into DuckDB:
 
 ```bash
-# 📈 Get cryptocurrency market data (BITWISE10)
-cd data/crypto
+# Import price data to DuckDB
+python -m data.scripts.import_prices
 
-# 📊 Get daily price data for major cryptocurrencies
-python get_daily_price_crypto.py
+# Import position data to DuckDB
+python -m data.scripts.import_positions
 
-# 🔄 Merge data into unified format
-python merge_crypto_jsonl.py
-
-# 📊 Crypto data will be saved to: data/crypto/crypto_merged.jsonl
+# Dry run (preview without writing)
+python -m data.scripts.import_positions --dry-run
 ```
 
+> **Note**: DuckDB is the primary data source. The system automatically falls back to JSONL files if DuckDB is unavailable.
 
-### 🛠️ Step 2: Start MCP Services
+### 🛠️ Step 2: Start Backend Services
 
+#### Start MCP Services
 ```bash
-cd ./agent_tools
+cd agent_tools
 python start_mcp_services.py
 ```
 
-### 🚀 Step 3: Start AI Arena
+MCP services run on the following ports (configurable in `.env`):
+| Service | Port | Description |
+|---------|------|-------------|
+| Math | 8000 | Financial calculations |
+| Search | 8001 | Market news search |
+| Trade | 8002 | Buy/sell execution |
+| Price | 8003 | Price data queries |
 
-#### For US Stocks (NASDAQ 100):
+#### Start FastAPI Backend (Optional)
 ```bash
-# 🎯 Run with default configuration
-python main.py
-
-# 🎯 Or specify US stock config
-python main.py configs/default_config.json
+cd api
+uvicorn main:app --host 0.0.0.0 --port 8080
 ```
 
-#### For A-Shares (SSE 50):
+### 🌐 Step 3: Start Frontend
+
 ```bash
-# 🎯 Run A-share trading
+cd docs
+python3 -m http.server 8000
+# Visit: http://localhost:8000
+```
+
+Or use the UI script:
+```bash
+bash scripts/start_ui.sh
+# Visit: http://localhost:8888
+```
+
+### 🕐 Historical Trading Simulation (Backtesting)
+
+Run agents on historical data to evaluate trading strategies:
+
+#### A-Share Daily Trading
+```bash
 python main.py configs/astock_config.json
 ```
 
-#### For Cryptocurrencies (BITWISE10):
+#### A-Share Hourly Trading
 ```bash
-# 🎯 Run cryptocurrency trading
-python main.py configs/default_crypto_config.json
+python main.py configs/astock_hour_config.json
 ```
+
+Example configuration (`configs/astock_config.json`):
+```json
+{
+  "agent_type": "BaseAgentAStock",
+  "date_range": {
+    "init_date": "2025-10-09",
+    "end_date": "2025-10-31"
+  },
+  "models": [
+    {
+      "name": "claude-3.7-sonnet",
+      "basemodel": "anthropic/claude-3.7-sonnet",
+      "signature": "claude-3.7-sonnet",
+      "enabled": true
+    }
+  ],
+  "agent_config": {
+    "initial_cash": 100000.0
+  }
+}
+```
+
+### ⏰ Real-Time Trading Simulation (Live Mode)
+
+For live trading with real-time market data:
+
+```bash
+# Start the scheduler for automated trading
+python run_scheduled.py
+
+# Or use the unified script
+python start.py --live
+```
+
+The scheduler automatically:
+- Fetches real-time price data during trading hours
+- Triggers trading decisions at configured intervals
+- Daily trading: Once per trading day at market open
+- Hourly trading: At 10:30, 11:30, 14:00, 15:00 (A-share market hours)
+
+Configure live trading in `configs/astock_config.json`:
+```json
+{
+  "scheduler": {
+    "enabled": true,
+    "mode": "daily",
+    "timezone": "Asia/Shanghai"
+  }
+}
+```
+
+### 🔧 Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| MCP service port conflict | Change ports in `.env` file |
+| DuckDB connection error | System auto-falls back to JSONL |
+| Missing price data | Run data preparation scripts |
+| API rate limit | Check Alpha Vantage/Tushare quotas |
+| Import ID constraint error | Ensure database tables are initialized |
+
+### 📁 Data File Locations
+
+| Data Type | Location |
+|-----------|----------|
+| A-stock daily prices | `data/A_stock/merged.jsonl` |
+| A-stock hourly prices | `data/A_stock/merged_hourly.jsonl` |
+| DuckDB database | `data/database/ai_trader.duckdb` |
+| Agent positions | `data/agent_data_astock/{agent}/position/` |
+| Trading logs | `data/agent_data_astock/{agent}/log/` |
 
 ### ⏰ Time Settings Example
 
@@ -835,7 +911,7 @@ Thanks to the following open source projects and services:
 - [Alpha Vantage](https://www.alphavantage.co/) - US stock financial data API
 - [Tushare](https://tushare.pro/) - China A-share market data API
 - [efinance](https://github.com/Micro-sheep/efinance) - A-share hourly data acquisition
-- [Jina AI](https://jina.ai/) - Information search service
+- [AKShare](https://akshare.akfamily.xyz/) - A-share market news service
 
 ## 👥 Administrator
 

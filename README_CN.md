@@ -79,7 +79,7 @@
 - 🛠️ **纯工具驱动架构**: 基于MCP工具链，AI通过标准化工具调用完成所有交易操作
 - 🏆 **多模型竞技场**: 部署多个AI模型（GPT、Claude、Qwen等）进行竞争性交易
 - 📊 **实时性能分析**: 完整的交易记录、持仓监控和盈亏分析
-- 🔍 **智能市场情报**: 集成Jina搜索，获取实时市场新闻和财务报告
+- 🔍 **智能市场情报**: 集成市场新闻搜索，获取实时财务报告
 - ⚡ **MCP工具链集成**: 基于Model Context Protocol的模块化工具生态系统
 - 🔌 **可扩展策略框架**: 支持第三方策略和自定义AI代理集成
 - ⏰ **历史回放功能**: 时间段回放功能，自动过滤未来信息
@@ -99,7 +99,7 @@
   - 上证50成分股
   - 主流加密货币（BTC、ETH、XRP、SOL、ADA、SUI、LINK、AVAX、LTC、DOT）
 - ⏰ **交易时间**: 加密货币整周交易，股票工作日市场时间，支持历史模拟
-- 📊 **数据集成**: Alpha Vantage API结合Jina AI市场情报
+- 📊 **数据集成**: Alpha Vantage API结合AKShare市场情报
 - 🔄 **时间管理**: 历史期间回放，自动过滤未来信息
 
 ---
@@ -199,7 +199,7 @@ AI-Trader Bench/
 │   ├── agent_tools/
 │   │   ├── tool_trade.py          # 💰 交易执行（自动适配市场规则）
 │   │   ├── tool_get_price_local.py # 📊 价格查询（支持美股+A股）
-│   │   ├── tool_jina_search.py   # 🔍 信息搜索
+│   │   ├── tool_akshare_news.py  # 🔍 信息搜索
 │   │   ├── tool_math.py           # 🧮 数学计算
 │   │   └── start_mcp_services.py  # 🚀 MCP服务启动脚本
 │   └── tools/                     # 🔧 辅助工具
@@ -326,7 +326,6 @@ AI-Trader Bench/
 - **API密钥**: 
   - OpenAI（用于AI模型）
   - Alpha Vantage（用于纳斯达克100数据）
-  - Jina AI（用于市场信息搜索）
   - Tushare（用于A股市场数据，可选）
 
 
@@ -356,7 +355,6 @@ OPENAI_API_KEY=your_openai_key
 
 # 📊 数据源配置
 ALPHAADVANTAGE_API_KEY=your_alpha_vantage_key  # 用于纳斯达克100和加密货币数据
-JINA_API_KEY=your_jina_api_key
 TUSHARE_TOKEN=your_tushare_token               # 用于A股数据
 
 # ⚙️ 系统配置
@@ -861,7 +859,7 @@ class CustomTool:
 - [Alpha Vantage](https://www.alphavantage.co/) - 美股金融数据API
 - [Tushare](https://tushare.pro/) - A股市场数据API
 - [efinance](https://github.com/Micro-sheep/efinance) - A股小时级数据获取
-- [Jina AI](https://jina.ai/) - 信息搜索服务
+- [AKShare](https://akshare.akfamily.xyz/) - A股市场新闻服务
 
 ## 👥 管理员
 
