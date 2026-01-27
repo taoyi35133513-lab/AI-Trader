@@ -17,8 +17,94 @@ from tools.price_tools import (get_latest_position, get_open_prices,
                                get_yesterday_date,
                                get_yesterday_open_and_close_price,
                                get_yesterday_profit)
+from tools.trading_logger import get_trading_logger
 
 mcp = FastMCP("TradeTools")
+
+# 获取日志记录器
+logger = get_trading_logger()
+
+
+def _write_to_duckdb(
+    signature: str,
+    date: str,
+    action: dict,
+    positions: dict,
+    action_id: int,
+) -> bool:
+    """将交易记录写入 DuckDB
+
+    Args:
+        signature: Agent 签名
+        date: 交易日期
+        action: 交易动作 {action, symbol, amount}
+        positions: 持仓字典
+        action_id: 操作 ID
+
+    Returns:
+        是否写入成功
+    """
+    try:
+        from data.database.connection import DatabaseManager
+
+        with DatabaseManager(read_only=False) as db:
+            # 获取下一个 ID
+            result = db.conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM positions").fetchone()
+            next_id = result[0] if result else 1
+
+            # 提取现金和持仓
+            cash = positions.get("CASH", 0)
+            action_type = action.get("action", "")
+            symbol = action.get("symbol", "")
+            amount = action.get("amount", 0)
+
+            # 计算总资产价值（简化：仅现金）
+            total_value = cash
+
+            # 获取当前价格
+            price = 0
+            if symbol and action_type in ("buy", "sell"):
+                try:
+                    prices = get_open_prices(date, [symbol])
+                    price = prices.get(f"{symbol}_price", 0) or 0
+                except Exception:
+                    pass
+
+            # 插入持仓记录（包含 id）
+            sql = """
+                INSERT INTO positions (
+                    id, agent_name, market, trade_date, step_id,
+                    ts_code, quantity, cash, action, action_amount, price, total_value
+                ) VALUES (?, ?, 'cn', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+
+            ts_code = symbol if symbol else None
+            quantity = positions.get(symbol, 0) if symbol else 0
+
+            params = (
+                next_id,
+                signature,
+                date,
+                action_id,
+                ts_code,
+                quantity,
+                cash,
+                action_type,
+                amount,
+                price,
+                total_value,
+            )
+            db.conn.execute(sql, params)
+
+            logger.info(f"DuckDB: 写入 {signature} {date} {action_type} {symbol or 'N/A'}")
+            return True
+
+    except Exception as e:
+        import traceback
+        logger.error(f"DuckDB 写入失败: {e}")
+        logger.error(traceback.format_exc())
+        return False
+
 
 def _position_lock(signature: str):
     """Context manager for file-based lock to serialize position updates per signature."""
@@ -199,29 +285,46 @@ def buy(symbol: str, amount: int) -> Dict[str, Any]:
         # Build file path: {project_root}/data/{log_path}/{signature}/position/position.jsonl
         # Use append mode ("a") to write new transaction record
         # Each operation ID increments by 1, ensuring uniqueness of operation sequence
+        # Step 6: Record transaction to position.jsonl file and DuckDB
         log_path = get_config_value("LOG_PATH", "./data/agent_data")
         if log_path.startswith("./data/"):
             log_path = log_path[7:]  # Remove "./data/" prefix
         position_file_path = os.path.join(project_root, "data", log_path, signature, "position", "position.jsonl")
+
+        action_record = {"action": "buy", "symbol": symbol, "amount": amount}
+        new_action_id = current_action_id + 1
+
+        # 写入 JSONL
         with open(position_file_path, "a") as f:
-            # Write JSON format transaction record, containing date, operation ID, transaction details and updated position
-            print(
-                f"Writing to position.jsonl: {json.dumps({'date': today_date, 'id': current_action_id + 1, 'this_action':{'action':'buy','symbol':symbol,'amount':amount},'positions': new_position})}"
-            )
             f.write(
                 json.dumps(
                     {
                         "date": today_date,
-                        "id": current_action_id + 1,
-                        "this_action": {"action": "buy", "symbol": symbol, "amount": amount},
+                        "id": new_action_id,
+                        "this_action": action_record,
                         "positions": new_position,
                     }
                 )
                 + "\n"
             )
+
+        # 写入 DuckDB
+        _write_to_duckdb(signature, today_date, action_record, new_position, new_action_id)
+
+        # 记录交易日志
+        cost = this_symbol_price * amount
+        logger.log_trade(
+            action="buy",
+            symbol=symbol,
+            amount=amount,
+            price=this_symbol_price,
+            cost=cost,
+            cash_before=current_position["CASH"],
+            cash_after=new_position["CASH"],
+        )
+
         # Step 7: Return updated position
         write_config_value("IF_TRADE", True)
-        print("IF_TRADE", get_config_value("IF_TRADE"))
         return new_position
 
 
@@ -402,30 +505,43 @@ def sell(symbol: str, amount: int) -> Dict[str, Any]:
     # Use get method to ensure CASH field exists, default to 0 if not present
     new_position["CASH"] = new_position.get("CASH", 0) + this_symbol_price * amount
 
-    # Step 6: Record transaction to position.jsonl file
-    # Build file path: {project_root}/data/{log_path}/{signature}/position/position.jsonl
-    # Use append mode ("a") to write new transaction record
-    # Each operation ID increments by 1, ensuring uniqueness of operation sequence
+    # Step 6: Record transaction to position.jsonl file and DuckDB
     log_path = get_config_value("LOG_PATH", "./data/agent_data")
     if log_path.startswith("./data/"):
         log_path = log_path[7:]  # Remove "./data/" prefix
     position_file_path = os.path.join(project_root, "data", log_path, signature, "position", "position.jsonl")
+
+    action_record = {"action": "sell", "symbol": symbol, "amount": amount}
+    new_action_id = current_action_id + 1
+
+    # 写入 JSONL
     with open(position_file_path, "a") as f:
-        # Write JSON format transaction record, containing date, operation ID and updated position
-        print(
-            f"Writing to position.jsonl: {json.dumps({'date': today_date, 'id': current_action_id + 1, 'this_action':{'action':'sell','symbol':symbol,'amount':amount},'positions': new_position})}"
-        )
         f.write(
             json.dumps(
                 {
                     "date": today_date,
-                    "id": current_action_id + 1,
-                    "this_action": {"action": "sell", "symbol": symbol, "amount": amount},
+                    "id": new_action_id,
+                    "this_action": action_record,
                     "positions": new_position,
                 }
             )
             + "\n"
         )
+
+    # 写入 DuckDB
+    _write_to_duckdb(signature, today_date, action_record, new_position, new_action_id)
+
+    # 记录交易日志
+    proceeds = this_symbol_price * amount
+    logger.log_trade(
+        action="sell",
+        symbol=symbol,
+        amount=amount,
+        price=this_symbol_price,
+        cost=proceeds,
+        cash_before=current_position.get("CASH", 0),
+        cash_after=new_position["CASH"],
+    )
 
     # Step 7: Return updated position
     write_config_value("IF_TRADE", True)

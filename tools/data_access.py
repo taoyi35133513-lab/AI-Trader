@@ -61,10 +61,14 @@ class PriceDataAccess:
         self.fallback_enabled = _is_fallback_enabled()
         self.market = market
 
-    def _get_db_manager(self):
-        """Get DatabaseManager instance (lazy import to avoid circular dependency)."""
+    def _get_db_manager(self, read_only: bool = True):
+        """Get DatabaseManager instance (lazy import to avoid circular dependency).
+
+        Args:
+            read_only: Use read-only mode for concurrent access (default: True)
+        """
         from data.database.connection import DatabaseManager
-        return DatabaseManager()
+        return DatabaseManager(read_only=read_only)
 
     def get_open_prices(
         self, today_date: str, symbols: List[str], merged_path: Optional[str] = None
@@ -312,10 +316,14 @@ class PositionDataAccess:
         self.prefer_duckdb = prefer_duckdb
         self.fallback_enabled = _is_fallback_enabled()
 
-    def _get_db_manager(self):
-        """Get DatabaseManager instance."""
+    def _get_db_manager(self, read_only: bool = False):
+        """Get DatabaseManager instance.
+
+        Args:
+            read_only: Use read-only mode (default: False for position writes)
+        """
         from data.database.connection import DatabaseManager
-        return DatabaseManager()
+        return DatabaseManager(read_only=read_only)
 
     def get_latest_position(
         self, today_date: str, signature: str

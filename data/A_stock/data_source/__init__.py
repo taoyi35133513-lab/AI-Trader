@@ -1,7 +1,7 @@
 """
 A股数据源模块
 
-提供统一的数据源接口，支持 akshare 和 tushare 两种数据源。
+提供统一的数据源接口，使用 AKShare 作为数据源。
 通过工厂函数 create_data_source() 创建数据源实例。
 """
 
@@ -16,13 +16,14 @@ def create_data_source(
 ) -> AStockDataSource:
     """创建数据源实例
 
-    工厂函数，根据 source_type 参数创建对应的数据源实例。
+    工厂函数，创建 AKShare 数据源实例。
 
     Args:
-        source_type: 数据源类型，支持 "akshare" 或 "tushare"
+        source_type: 数据源类型，仅支持 "akshare"
         **kwargs: 传递给数据源构造函数的参数
-            - akshare: max_retries, retry_delay, request_interval
-            - tushare: token, api_url, max_retries, retry_delay, timeout
+            - max_retries: 最大重试次数
+            - retry_delay: 重试延迟
+            - request_interval: 请求间隔
 
     Returns:
         AStockDataSource 子类实例
@@ -31,13 +32,8 @@ def create_data_source(
         ValueError: 不支持的数据源类型
 
     Example:
-        >>> # 创建 AKShare 数据源（推荐）
         >>> source = create_data_source("akshare")
         >>> df = source.get_stock_daily(["600519.SH"], "20250101", "20250110")
-
-        >>> # 创建 Tushare 数据源
-        >>> source = create_data_source("tushare", token="your_token")
-        >>> df = source.get_index_constituents("000016.SH")
     """
     source_type = source_type.lower()
 
@@ -46,13 +42,8 @@ def create_data_source(
 
         return AKShareDataSource(**kwargs)
 
-    elif source_type == "tushare":
-        from .tushare_source import TushareDataSource
-
-        return TushareDataSource(**kwargs)
-
     else:
-        raise ValueError(f"不支持的数据源类型: {source_type}，可选: akshare, tushare")
+        raise ValueError(f"不支持的数据源类型: {source_type}，仅支持: akshare")
 
 
 def get_available_sources() -> list:
@@ -61,7 +52,7 @@ def get_available_sources() -> list:
     Returns:
         数据源类型名称列表
     """
-    return ["akshare", "tushare"]
+    return ["akshare"]
 
 
 # 导出

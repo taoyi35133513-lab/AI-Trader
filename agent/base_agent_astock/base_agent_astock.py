@@ -87,9 +87,44 @@ from prompts.agent_prompt_astock import (STOP_SIGNAL,
 from tools.general_tools import (extract_conversation, extract_tool_messages,
                                  get_config_value, write_config_value)
 from tools.price_tools import add_no_trade_record
+from tools.trading_logger import get_trading_logger
 
 # Load environment variables
 load_dotenv()
+
+# DuckDB 服务（延迟导入避免循环依赖）
+_conversation_service = None
+_db_conn = None
+
+
+def _get_conversation_service():
+    """获取 ConversationService 单例（延迟初始化）
+
+    注意：连接在进程生命周期内保持打开，在 _cleanup_db_connection() 中关闭
+    """
+    global _conversation_service, _db_conn
+    if _conversation_service is None:
+        try:
+            from data.database.connection import get_connection
+            from api.services.conversation_service import ConversationService
+            _db_conn = get_connection(read_only=False)
+            _conversation_service = ConversationService(_db_conn)
+        except Exception as e:
+            print(f"⚠️ Failed to initialize DuckDB conversation service: {e}")
+            return None
+    return _conversation_service
+
+
+def _cleanup_db_connection():
+    """清理数据库连接（在 Agent 结束时调用）"""
+    global _conversation_service, _db_conn
+    if _db_conn is not None:
+        try:
+            _db_conn.close()
+        except Exception:
+            pass
+        _db_conn = None
+    _conversation_service = None
 
 
 class BaseAgentAStock:
@@ -235,26 +270,64 @@ class BaseAgentAStock:
         self.data_path = os.path.join(self.base_log_path, self.signature)
         self.position_file = os.path.join(self.data_path, "position", "position.jsonl")
 
+        # DuckDB session tracking
+        self._current_session_id: Optional[int] = None
+        self._current_session_timestamp: Optional[datetime] = None
+
     def _get_default_mcp_config(self) -> Dict[str, Dict[str, Any]]:
-        """Get default MCP configuration"""
-        return {
-            "math": {
-                "transport": "streamable_http",
-                "url": f"http://localhost:{os.getenv('MATH_HTTP_PORT', '8000')}/mcp",
-            },
-            "stock_local": {
-                "transport": "streamable_http",
-                "url": f"http://localhost:{os.getenv('GETPRICE_HTTP_PORT', '8003')}/mcp",
-            },
-            "search": {
-                "transport": "streamable_http",
-                "url": f"http://localhost:{os.getenv('SEARCH_HTTP_PORT', '8001')}/mcp",
-            },
-            "trade": {
-                "transport": "streamable_http",
-                "url": f"http://localhost:{os.getenv('TRADE_HTTP_PORT', '8002')}/mcp",
-            },
-        }
+        """Get default MCP configuration
+
+        Supports two modes:
+        1. Unified mode (default): All MCP services via FastAPI backend at single port
+           - Set by UNIFIED_BACKEND_URL env var (default: http://localhost:8888)
+        2. Legacy mode: Separate MCP services on different ports
+           - Set individual port env vars (MATH_HTTP_PORT, etc.)
+           - Or set UNIFIED_MCP_MODE=false
+        """
+        # Check for unified backend mode (default if UNIFIED_BACKEND_URL is set or not explicitly disabled)
+        unified_url = os.getenv("UNIFIED_BACKEND_URL", "http://localhost:8888")
+        unified_mode = os.getenv("UNIFIED_MCP_MODE", "true").lower() == "true"
+
+        if unified_mode:
+            # Unified mode: All services through single FastAPI backend
+            return {
+                "math": {
+                    "transport": "streamable_http",
+                    "url": f"{unified_url}/mcp/math/mcp",
+                },
+                "stock_local": {
+                    "transport": "streamable_http",
+                    "url": f"{unified_url}/mcp/price/mcp",
+                },
+                "search": {
+                    "transport": "streamable_http",
+                    "url": f"{unified_url}/mcp/search/mcp",
+                },
+                "trade": {
+                    "transport": "streamable_http",
+                    "url": f"{unified_url}/mcp/trade/mcp",
+                },
+            }
+        else:
+            # Legacy mode: Separate MCP services on different ports
+            return {
+                "math": {
+                    "transport": "streamable_http",
+                    "url": f"http://localhost:{os.getenv('MATH_HTTP_PORT', '8000')}/mcp",
+                },
+                "stock_local": {
+                    "transport": "streamable_http",
+                    "url": f"http://localhost:{os.getenv('GETPRICE_HTTP_PORT', '8003')}/mcp",
+                },
+                "search": {
+                    "transport": "streamable_http",
+                    "url": f"http://localhost:{os.getenv('SEARCH_HTTP_PORT', '8001')}/mcp",
+                },
+                "trade": {
+                    "transport": "streamable_http",
+                    "url": f"http://localhost:{os.getenv('TRADE_HTTP_PORT', '8002')}/mcp",
+                },
+            }
 
     async def initialize(self) -> None:
         """Initialize MCP client and AI model"""
@@ -280,11 +353,21 @@ class BaseAgentAStock:
             else:
                 print(f"✅ Loaded {len(self.tools)} MCP tools")
         except Exception as e:
-            raise RuntimeError(
-                f"❌ Failed to initialize MCP client: {e}\n"
-                f"   Please ensure MCP services are running at the configured ports.\n"
-                f"   Run: python agent_tools/start_mcp_services.py"
-            )
+            unified_mode = os.getenv("UNIFIED_MCP_MODE", "true").lower() == "true"
+            if unified_mode:
+                unified_url = os.getenv("UNIFIED_BACKEND_URL", "http://localhost:8888")
+                raise RuntimeError(
+                    f"❌ Failed to initialize MCP client: {e}\n"
+                    f"   Please ensure the unified backend is running at {unified_url}\n"
+                    f"   Run: python start.py --only-backend\n"
+                    f"   Or use: python start.py (to start everything)"
+                )
+            else:
+                raise RuntimeError(
+                    f"❌ Failed to initialize MCP client: {e}\n"
+                    f"   Please ensure MCP services are running at the configured ports.\n"
+                    f"   Run: python agent_tools/start_mcp_services.py"
+                )
 
         try:
             # Create AI model - use custom DeepSeekChatOpenAI for DeepSeek models
@@ -322,11 +405,49 @@ class BaseAgentAStock:
             os.makedirs(log_path)
         return os.path.join(log_path, "log.jsonl")
 
-    def _log_message(self, log_file: str, new_messages: List[Dict[str, str]]) -> None:
-        """Log messages to log file"""
-        log_entry = {"timestamp": datetime.now().isoformat(), "signature": self.signature, "new_messages": new_messages}
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+    def _log_message(self, log_file: str, new_messages: List[Dict[str, str]], session_timestamp: Optional[datetime] = None) -> None:
+        """Log messages to DuckDB (primary) and JSONL file (backup)
+
+        Args:
+            log_file: JSONL log file path (for backup)
+            new_messages: List of messages [{"role": "user", "content": "..."}]
+            session_timestamp: Session timestamp (for DuckDB session creation)
+        """
+        timestamp = session_timestamp or datetime.now()
+
+        # Normalize new_messages to list
+        if isinstance(new_messages, dict):
+            new_messages = [new_messages]
+
+        # Write to DuckDB (primary)
+        try:
+            conv_service = _get_conversation_service()
+            if conv_service:
+                # Create session if not exists
+                if self._current_session_id is None:
+                    self._current_session_id = conv_service.create_session(
+                        agent_name=self.signature,
+                        market=self.market,
+                        session_timestamp=timestamp,
+                    )
+                    self._current_session_timestamp = timestamp
+
+                # Add messages to session
+                conv_service.add_messages(
+                    session_id=self._current_session_id,
+                    messages=new_messages,
+                    base_timestamp=timestamp,
+                )
+        except Exception as e:
+            print(f"⚠️ DuckDB log write failed: {e}")
+
+        # Write to JSONL file (backup) - 保留以便迁移期间的向后兼容
+        try:
+            log_entry = {"timestamp": timestamp.isoformat(), "signature": self.signature, "new_messages": new_messages}
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+        except Exception as e:
+            print(f"⚠️ JSONL log write failed: {e}")
 
     async def _ainvoke_with_retry(self, message: List[Dict[str, str]]) -> Any:
         """Agent invocation with retry"""
@@ -347,7 +468,23 @@ class BaseAgentAStock:
         Args:
             today_date: Trading date
         """
-        print(f"📈 Starting A-shares trading session: {today_date}")
+        # 获取日志记录器
+        trading_logger = get_trading_logger()
+        trading_logger.set_context(agent=self.signature, date=today_date)
+        trading_logger.log_trading_day_start(today_date)
+
+        # Reset session tracking for new trading day
+        self._current_session_id = None
+        self._current_session_timestamp = None
+
+        # Parse session timestamp from today_date
+        try:
+            if " " in today_date:
+                session_timestamp = datetime.strptime(today_date, "%Y-%m-%d %H:%M:%S")
+            else:
+                session_timestamp = datetime.strptime(today_date, "%Y-%m-%d")
+        except ValueError:
+            session_timestamp = datetime.now()
 
         # Set up logging
         log_file = self._setup_logging(today_date)
@@ -364,13 +501,13 @@ class BaseAgentAStock:
         message = user_query.copy()
 
         # Log initial message
-        self._log_message(log_file, user_query)
+        self._log_message(log_file, user_query, session_timestamp)
 
         # Trading loop
         current_step = 0
         while current_step < self.max_steps:
             current_step += 1
-            print(f"🔄 Step {current_step}/{self.max_steps}")
+            trading_logger.log_agent_step(current_step, self.max_steps)
 
             try:
                 # Call agent
@@ -381,8 +518,7 @@ class BaseAgentAStock:
 
                 # Check stop signal
                 if STOP_SIGNAL in agent_response:
-                    print("✅ Received stop signal, trading session ended")
-                    print(agent_response)
+                    trading_logger.info("收到停止信号，交易会话结束")
                     self._log_message(log_file, [{"role": "assistant", "content": agent_response}])
                     break
 
@@ -404,25 +540,26 @@ class BaseAgentAStock:
                 self._log_message(log_file, new_messages[1])
 
             except Exception as e:
-                print(f"❌ Trading session error: {str(e)}")
-                print(f"Error details: {e}")
+                trading_logger.error(f"交易会话错误: {str(e)}")
                 raise
 
         # Handle trading results
         await self._handle_trading_result(today_date)
+        trading_logger.log_trading_day_end(today_date)
 
     async def _handle_trading_result(self, today_date: str) -> None:
         """Handle trading results"""
+        trading_logger = get_trading_logger()
         if_trade = get_config_value("IF_TRADE")
         if if_trade:
             write_config_value("IF_TRADE", False)
-            print("✅ Trading completed")
+            trading_logger.info("交易完成")
         else:
-            print("📊 No trading, maintaining positions")
+            trading_logger.log_no_trade("维持当前持仓")
             try:
                 add_no_trade_record(today_date, self.signature)
             except NameError as e:
-                print(f"❌ NameError: {e}")
+                trading_logger.error(f"添加无交易记录失败: {e}")
                 raise
             write_config_value("IF_TRADE", False)
 
@@ -544,20 +681,32 @@ class BaseAgentAStock:
             init_date: Start date
             end_date: End date
         """
-        print(f"📅 Running A-shares date range: {init_date} to {end_date}")
+        # 获取日志记录器
+        trading_logger = get_trading_logger()
 
         # Get trading date list
         trading_dates = self.get_trading_dates(init_date, end_date)
 
         if not trading_dates:
-            print(f"ℹ️ No trading days to process")
+            trading_logger.info(f"[{self.signature}] 无需处理的交易日")
             return
 
-        print(f"📊 Trading days to process: {trading_dates}")
+        # 记录回测开始
+        trading_logger.log_backtest_start(
+            agent=self.signature,
+            start_date=init_date,
+            end_date=end_date,
+            trading_dates=trading_dates,
+        )
 
         # Process each trading day
-        for date in trading_dates:
-            print(f"🔄 Processing {self.signature} - Date: {date}")
+        for i, date in enumerate(trading_dates):
+            trading_logger.set_context(
+                agent=self.signature,
+                date=date,
+                total_dates=len(trading_dates),
+                processed_dates=i,
+            )
 
             # Set configuration
             write_config_value("TODAY_DATE", date)
@@ -566,11 +715,18 @@ class BaseAgentAStock:
             try:
                 await self.run_with_retry(date)
             except Exception as e:
-                print(f"❌ Error processing {self.signature} - Date: {date}")
-                print(e)
+                trading_logger.error(f"处理日期 {date} 时出错: {e}")
                 raise
 
-        print(f"✅ {self.signature} processing completed")
+        # 记录回测结束
+        summary = self.get_position_summary()
+        trading_logger.log_backtest_end({
+            "total_days": len(trading_dates),
+            "final_cash": summary.get("positions", {}).get("CASH", "N/A"),
+        })
+
+        # 清理数据库连接
+        _cleanup_db_connection()
 
     def get_position_summary(self) -> Dict[str, Any]:
         """Get position summary"""

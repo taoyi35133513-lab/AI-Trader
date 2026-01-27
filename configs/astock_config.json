@@ -1,9 +1,10 @@
 {
   "agent_type": "BaseAgentAStock",
   "market": "cn",
+  "data_source": "akshare",
   "date_range": {
-    "init_date": "2025-10-01",
-    "end_date": "2026-02-04"
+    "init_date": "2025-12-24",
+    "end_date": "2026-01-10"
   },
   "models": [
     {
@@ -28,7 +29,9 @@
       "name": "gemini-2.5-flash",
       "basemodel": "gemini-2.5-flash",
       "signature": "gemini-2.5-flash",
-      "enabled": true
+      "enabled": true,
+      "openai_base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "openai_api_key": "AIzaSyCu8FVzf3km0sDVJyieRLy3aIIAErS4PQI"
     },
     {
       "name": "gpt-5",

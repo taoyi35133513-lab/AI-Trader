@@ -1,8 +1,11 @@
 """
 Agent 数据服务
+
+支持 DuckDB 优先、JSONL 降级的混合数据访问模式。
 """
 
 import json
+import logging
 import os
 from datetime import date, datetime
 from decimal import Decimal
@@ -13,6 +16,9 @@ import duckdb
 import pandas as pd
 
 from api.config import get_data_dir, get_project_root, load_config_json
+from api.services.position_service_v2 import PositionServiceV2
+
+logger = logging.getLogger(__name__)
 
 
 class AgentService:
@@ -21,6 +27,7 @@ class AgentService:
     def __init__(self, conn: duckdb.DuckDBPyConnection):
         self.conn = conn
         self.project_root = get_project_root()
+        self._position_service = PositionServiceV2(conn)
 
     def get_all_agents(self, market: str = "cn") -> List[dict]:
         """获取所有 Agent 信息
@@ -31,19 +38,15 @@ class AgentService:
         Returns:
             Agent 信息列表
         """
-        # 从配置文件加载 Agent 信息
-        config_map = {
-            "cn": "astock_config.json",
-            "cn_hour": "astock_hour_config.json",
-            "us": "default_config.json",
-        }
-
-        config_name = config_map.get(market, "astock_config.json")
-        config = load_config_json(config_name)
+        # 使用统一的配置文件
+        config = load_config_json("config.json")
 
         agents = []
         models = config.get("models", [])
         initial_cash = config.get("agent_config", {}).get("initial_cash", 100000)
+
+        # 根据 market 确定 signature 后缀
+        signature_suffix = "-astock-hour" if market == "cn_hour" else ""
 
         # Agent 图标和颜色映射
         icons = ["🤖", "🧠", "💡", "🎯", "🚀", "⚡", "🔮", "🎨"]
@@ -60,9 +63,11 @@ class AgentService:
 
         for i, model in enumerate(models):
             if model.get("enabled", True):
+                base_name = model.get("signature", model.get("name"))
+                agent_name = f"{base_name}{signature_suffix}"
                 agents.append(
                     {
-                        "name": model.get("signature", model.get("name")),
+                        "name": agent_name,
                         "display_name": model.get("name", model.get("signature")),
                         "market": market,
                         "initial_cash": initial_cash,
@@ -82,6 +87,8 @@ class AgentService:
     ) -> List[dict]:
         """获取 Agent 持仓历史
 
+        优先从 DuckDB 读取，如果数据为空则降级到 JSONL 文件。
+
         Args:
             agent_name: Agent 名称
             market: 市场
@@ -91,7 +98,31 @@ class AgentService:
         Returns:
             持仓记录列表
         """
-        # 从 JSONL 文件加载持仓数据
+        # 尝试从 DuckDB 获取
+        try:
+            positions = self._position_service.get_positions_by_agent(
+                agent_name=agent_name,
+                market=market,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if positions:
+                logger.debug(f"DuckDB: Retrieved {len(positions)} positions for {agent_name}")
+                return positions
+        except Exception as e:
+            logger.warning(f"DuckDB position query failed: {e}")
+
+        # 降级到 JSONL 文件
+        return self._get_positions_from_jsonl(agent_name, market, start_date, end_date)
+
+    def _get_positions_from_jsonl(
+        self,
+        agent_name: str,
+        market: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> List[dict]:
+        """从 JSONL 文件加载持仓数据（降级方法）"""
         data_dir = get_data_dir(market)
         position_file = data_dir / agent_name / "position" / "position.jsonl"
 
@@ -127,9 +158,11 @@ class AgentService:
                             "step_id": record.get("id"),
                             "positions": record.get("positions", {}),
                             "cash": record.get("positions", {}).get("CASH", 0),
+                            "this_action": record.get("this_action"),
                         }
                     )
 
+        logger.debug(f"JSONL: Retrieved {len(positions)} positions for {agent_name}")
         return positions
 
     def get_agent_asset_history(
@@ -159,30 +192,57 @@ class AgentService:
 
         initial_cash = float(agent_info.get("initial_cash", 100000))
 
+        # 对于同一日期/时间的多条记录，只保留最后一条（id/step_id 最大的）
+        # 这与前端 data-loader.js 的处理逻辑一致
+        # 小时级市场使用完整时间戳作为 key，日线市场使用日期
+        positions_by_date = {}
+        for pos in positions:
+            raw_date = pos.get("date", "")
+            if market == "cn_hour":
+                # 小时级：使用完整时间戳
+                date_key = raw_date
+            else:
+                # 日线：只使用日期部分
+                date_key = raw_date.split(" ")[0]
+            step_id = pos.get("step_id", 0)
+            if date_key not in positions_by_date or step_id > positions_by_date[date_key].get("step_id", 0):
+                positions_by_date[date_key] = pos
+
+        # 按日期排序
+        sorted_dates = sorted(positions_by_date.keys())
+        unique_positions = [positions_by_date[d] for d in sorted_dates]
+
         # 计算每日资产价值
         history = []
-        for pos in positions:
+        for pos in unique_positions:
             pos_dict = pos.get("positions", {})
             cash = float(pos_dict.get("CASH", 0))
 
             # 计算股票市值
             stock_value = 0
+            raw_date = pos.get("date", "")
+            # 小时级市场使用完整时间戳查询价格，日线市场使用日期
+            if market == "cn_hour":
+                price_date_str = raw_date  # 完整时间戳如 "2025-12-31 15:00:00"
+            else:
+                price_date_str = raw_date.split(" ")[0]  # 只取日期部分
+
             for symbol, quantity in pos_dict.items():
                 if symbol == "CASH" or quantity == 0:
                     continue
 
                 # 从数据库获取价格
-                date_str = pos.get("date", "").split(" ")[0]
-                price_data = self._get_price_for_date(symbol, date_str)
+                price_data = self._get_price_for_date(symbol, price_date_str, market)
                 if price_data:
                     stock_value += float(price_data.get("close", 0)) * quantity
 
             total_value = cash + stock_value
             return_pct = ((total_value - initial_cash) / initial_cash) * 100
 
+            # 返回的 date 字段：小时级保留完整时间戳，日线只保留日期
             history.append(
                 {
-                    "date": pos.get("date", "").split(" ")[0],
+                    "date": price_date_str,
                     "total_value": round(total_value, 2),
                     "cash": round(cash, 2),
                     "stock_value": round(stock_value, 2),
@@ -206,14 +266,35 @@ class AgentService:
             "color": agent_info.get("color"),
         }
 
-    def _get_price_for_date(self, symbol: str, date_str: str) -> Optional[dict]:
-        """获取指定日期的价格"""
+    def _get_price_for_date(
+        self, symbol: str, date_str: str, market: str = "cn"
+    ) -> Optional[dict]:
+        """获取指定日期的价格
+
+        Args:
+            symbol: 股票代码
+            date_str: 日期字符串 (daily: "2025-12-31", hourly: "2025-12-31 15:00:00")
+            market: 市场类型 (cn/cn_hour)
+
+        Returns:
+            价格数据字典，包含 close 字段
+        """
         try:
-            sql = """
-                SELECT close FROM stock_daily_prices
-                WHERE ts_code = ? AND trade_date = ?
-            """
-            result = self.conn.execute(sql, [symbol, date_str]).fetchone()
+            if market == "cn_hour":
+                # 小时级：查询 stock_hourly_prices 表
+                sql = """
+                    SELECT close FROM stock_hourly_prices
+                    WHERE ts_code = ? AND trade_time = ?
+                """
+                result = self.conn.execute(sql, [symbol, date_str]).fetchone()
+            else:
+                # 日线：查询 stock_daily_prices 表
+                sql = """
+                    SELECT close FROM stock_daily_prices
+                    WHERE ts_code = ? AND trade_date = ?
+                """
+                result = self.conn.execute(sql, [symbol, date_str]).fetchone()
+
             if result:
                 return {"close": result[0]}
         except Exception:

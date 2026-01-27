@@ -1,36 +1,43 @@
 // Config Loader Utility
-// Loads and manages the YAML configuration file
+// Loads configuration from API instead of static YAML file
 
 class ConfigLoader {
     constructor() {
         this.config = null;
-        this.configPath = './config.generated.yaml';
-        this.fallbackConfigPath = './config.yaml';
+        // Default API URL - can be overridden by URL parameter
+        this.apiBaseUrl = this._getApiBaseUrl();
     }
 
-    // Load the YAML configuration file
+    // Get API base URL from URL parameter or default
+    _getApiBaseUrl() {
+        const urlParams = new URLSearchParams(window.location.search);
+        return urlParams.get('api') || 'http://localhost:8888';
+    }
+
+    // Load configuration from API
     async loadConfig() {
         if (this.config) {
             return this.config;
         }
 
+        const configUrl = `${this.apiBaseUrl}/api/config/full`;
+        console.log('Loading configuration from API:', configUrl);
+
         try {
-            console.log('Loading configuration from:', this.configPath);
-            let response = await fetch(this.configPath);
+            const response = await fetch(configUrl, {
+                method: 'GET',
+                signal: AbortSignal.timeout(5000)  // 5 second timeout
+            });
+
             if (!response.ok) {
-                console.log(`Primary config not found (${response.status}), fallback to: ${this.fallbackConfigPath}`);
-                response = await fetch(this.fallbackConfigPath);
-                if (!response.ok) {
-                    throw new Error(`Failed to load config: ${response.status}`);
-                }
+                throw new Error(`Failed to load config from API: ${response.status}`);
             }
 
-            const yamlText = await response.text();
-            this.config = jsyaml.load(yamlText);
-            console.log('Configuration loaded successfully:', this.config);
+            this.config = await response.json();
+            console.log('Configuration loaded successfully from API:', this.config);
             return this.config;
         } catch (error) {
-            console.error('Error loading configuration:', error);
+            console.error('Error loading configuration from API:', error);
             throw error;
         }
     }
@@ -144,7 +151,7 @@ class ConfigLoader {
     getUIConfig() {
         if (!this.config || !this.config.ui) {
             return {
-                initial_value: 10000,
+                initial_value: 100000,
                 max_recent_trades: 20,
                 date_formats: {
                     hourly: 'MM/DD HH:mm',
@@ -153,18 +160,6 @@ class ConfigLoader {
             };
         }
         return this.config.ui;
-    }
-
-    // Get cache configuration
-    getCacheConfig() {
-        if (!this.config || !this.config.cache) {
-            return {
-                enabled: true,
-                max_age_days: 7,
-                show_performance_metrics: true
-            };
-        }
-        return this.config.cache;
     }
 
     // Check if an agent is enabled
@@ -211,9 +206,9 @@ class ConfigLoader {
     getApiConfig() {
         if (!this.config || !this.config.api) {
             return {
-                enabled: false,
-                base_url: 'http://localhost:8000',
-                fallback_to_files: true
+                enabled: true,
+                base_url: this.apiBaseUrl,
+                fallback_to_files: false
             };
         }
         return this.config.api;
@@ -228,7 +223,7 @@ class ConfigLoader {
     // Get API base URL
     getApiBaseUrl() {
         const apiConfig = this.getApiConfig();
-        return apiConfig.base_url || 'http://localhost:8000';
+        return apiConfig.base_url || this.apiBaseUrl;
     }
 
     // Check if fallback to files is enabled

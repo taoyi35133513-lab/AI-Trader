@@ -67,33 +67,46 @@ class AStockIntradayDataFetcher:
     
     def load_stock_list(self) -> List[str]:
         """从CSV文件加载股票代码列表
-        
+
         从 sse_50_weight.csv 文件中读取 con_code 列，提取上证50成分股代码。
-        
+        同时添加持仓中的股票（即使已从指数中剔除）。
+
         Returns:
             股票代码列表（不含后缀，如 '600519'）
-            
+
         Raises:
             FileNotFoundError: 当股票列表文件不存在时
         """
         if not self.stock_list_path.exists():
             raise FileNotFoundError(f"股票列表文件不存在: {self.stock_list_path}")
-        
+
         logger.info(f"从 {self.stock_list_path} 加载股票列表")
         df = pd.read_csv(self.stock_list_path)
-        
+
         # 从 con_code 列提取唯一的股票代码
         if "con_code" not in df.columns:
             raise ValueError(f"文件 {self.stock_list_path} 中缺少 'con_code' 列")
-        
-        stock_list = df["con_code"].unique()
-        
+
+        stock_set = set(df["con_code"].unique())
+
+        # 添加持仓中的股票（即使已从指数中剔除）
+        try:
+            from validate_data import DataValidator
+            validator = DataValidator(self.data_dir)
+            held_stocks = validator.get_all_held_stocks("hourly")
+            extra_held = held_stocks - stock_set
+            if extra_held:
+                logger.info(f"添加 {len(extra_held)} 只持仓股票（已从指数剔除）: {sorted(extra_held)}")
+                stock_set = stock_set | extra_held
+        except Exception as e:
+            logger.warning(f"获取持仓股票失败: {e}")
+
         # 去除 .SH 或 .SZ 后缀
-        stock_list = [code.replace(".SH", "").replace(".SZ", "") for code in stock_list]
-        
+        stock_list = [code.replace(".SH", "").replace(".SZ", "") for code in stock_set]
+
         logger.info(f"成功加载 {len(stock_list)} 只股票")
         logger.debug(f"股票列表: {stock_list[:5]}..." if len(stock_list) > 5 else f"股票列表: {stock_list}")
-        
+
         return stock_list
     
     def get_date_range(self, default_start_date: str = "20251001") -> Tuple[str, str]:

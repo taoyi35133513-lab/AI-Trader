@@ -5,12 +5,6 @@
     "retry_delay": 1.0,
     "request_interval": 0.5
   },
-  "tushare": {
-    "api_url": "http://tushare.xyz:5000",
-    "max_retries": 3,
-    "retry_delay": 5,
-    "timeout": 120
-  },
   "index_mapping": {
     "000016.SH": {
       "name": "上证50",

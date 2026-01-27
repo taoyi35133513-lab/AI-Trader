@@ -8,7 +8,6 @@ class DataLoader {
         this.config = null;
         this.baseDataPath = './data';
         this.currentMarket = 'us'; // 'us' or 'cn'
-        this.cacheManager = new CacheManager(); // Initialize cache manager
         this.apiBaseUrl = null;
         this.useApi = false;
     }
@@ -280,10 +279,17 @@ class DataLoader {
             return null;
         }
 
+        // Helper function to extract price from a price record
+        const extractPrice = (priceRecord) => {
+            if (!priceRecord) return null;
+            // Try different price keys in order of preference
+            const price = priceRecord['4. close'] || priceRecord['4. sell price'] || priceRecord['1. buy price'];
+            return price ? parseFloat(price) : null;
+        };
+
         // Try exact match first (for hourly data like "2025-10-01 10:00:00")
         if (prices[dateOrTimestamp]) {
-            const closePrice = prices[dateOrTimestamp]['4. close'] || prices[dateOrTimestamp]['4. sell price'];
-            return closePrice ? parseFloat(closePrice) : null;
+            return extractPrice(prices[dateOrTimestamp]);
         }
 
         // For A-shares: Extract date only for daily data matching
@@ -291,8 +297,7 @@ class DataLoader {
         if (this.currentMarket.startsWith('cn')) {
             const dateOnly = dateOrTimestamp.split(' ')[0]; // "2025-10-01 10:00:00" -> "2025-10-01"
             if (prices[dateOnly]) {
-                const closePrice = prices[dateOnly]['4. close'] || prices[dateOnly]['4. sell price'];
-                return closePrice ? parseFloat(closePrice) : null;
+                return extractPrice(prices[dateOnly]);
             }
 
             // If still not found, try to find the closest timestamp on the same date (for hourly data)
@@ -302,8 +307,7 @@ class DataLoader {
             if (matchingKeys.length > 0) {
                 // Use the last (most recent) timestamp for that date
                 const lastKey = matchingKeys.sort().pop();
-                const closePrice = prices[lastKey]['4. close'] || prices[lastKey]['4. sell price'];
-                return closePrice ? parseFloat(closePrice) : null;
+                return extractPrice(prices[lastKey]);
             }
         }
 
@@ -789,6 +793,11 @@ class DataLoader {
         console.log(`[loadAllAgentsDataViaApi] Fetching from API for market: ${this.currentMarket}`);
 
         try {
+            // For A-shares, also load price data for holdings table
+            if (this.currentMarket.startsWith('cn')) {
+                await this.loadAStockPrices();
+            }
+
             const response = await fetch(`${this.apiBaseUrl}/api/dashboard/${this.currentMarket}`);
             if (!response.ok) {
                 throw new Error(`API returned ${response.status}`);
@@ -805,7 +814,7 @@ class DataLoader {
                 if (history.length > 0) {
                     allData[agentName] = {
                         name: agentName,
-                        positions: [], // Positions can be loaded separately if needed
+                        positions: agentHistory.positions || [],
                         assetHistory: history.map(h => ({
                             date: h.date,
                             value: h.total_value,
@@ -827,17 +836,21 @@ class DataLoader {
 
                 if (benchmarkData.length > 0) {
                     const initialValue = allData[Object.keys(allData)[0]]?.initialValue || 10000;
-                    const firstPrice = benchmarkData[0]?.close;
+                    // Support both 'close' and 'value' fields from API
+                    const firstPrice = benchmarkData[0]?.close || benchmarkData[0]?.value;
 
                     allData[benchmarkName] = {
                         name: benchmarkName,
                         positions: [],
                         assetHistory: benchmarkData.map(d => {
-                            const benchmarkReturn = (d.close - firstPrice) / firstPrice;
+                            const price = d.close || d.value;
+                            const benchmarkReturn = (price - firstPrice) / firstPrice;
+                            // Support both 'date' and 'trade_date' fields
+                            const dateStr = d.date || (d.trade_date ? d.trade_date.split('T')[0] : null);
                             return {
-                                date: d.date,
+                                date: dateStr,
                                 value: initialValue * (1 + benchmarkReturn),
-                                id: `${benchmarkName}-${d.date}`,
+                                id: `${benchmarkName}-${dateStr}`,
                                 action: null
                             };
                         }),
@@ -867,90 +880,19 @@ class DataLoader {
         }
     }
 
-    // Load all agents data with caching
+    // Load all agents data from API
     async loadAllAgentsData() {
-        const startTime = performance.now();
         console.log(`[loadAllAgentsData] Starting for market: ${this.currentMarket}`);
 
         // Ensure initialized
         await this.initialize();
 
-        // Try API mode first if enabled
-        if (this.useApi) {
-            try {
-                return await this.loadAllAgentsDataViaApi();
-            } catch (error) {
-                console.warn('[loadAllAgentsData] API failed, checking fallback:', error.message);
-                if (window.configLoader.isApiFallbackEnabled()) {
-                    console.log('[loadAllAgentsData] Falling back to file-based loading');
-                } else {
-                    throw error;
-                }
-            }
+        // API mode is required
+        if (!this.useApi) {
+            throw new Error('API is unavailable. Please ensure the backend server is running at ' + this.apiBaseUrl);
         }
 
-        // Try to load from cache first
-        console.log(`[loadAllAgentsData] Loading cache for market: ${this.currentMarket}`);
-        const cachedData = await this.cacheManager.loadCache(this.currentMarket);
-        console.log(`[loadAllAgentsData] Cache result:`, cachedData ? Object.keys(cachedData) : 'null');
-
-        if (cachedData) {
-            const loadTime = performance.now() - startTime;
-            console.log('✓ Using cached data (fast path)');
-
-            if (this.cacheManager.shouldShowPerformanceMetrics()) {
-                console.log(`%c⚡ Total data load time: ${loadTime.toFixed(2)}ms (cached)`, 'color: #00ff00; font-weight: bold');
-            }
-
-            this.agentData = cachedData;
-            return cachedData;
-        }
-
-        // Cache miss or disabled - fall back to live calculation
-        console.log('⚠ Cache miss - performing live calculation (slow path)');
-        const calcStartTime = performance.now();
-
-        const agents = await this.loadAgentList();
-        console.log('Found agents:', agents);
-        const allData = {};
-
-        for (const agent of agents) {
-            console.log(`Loading data for ${agent}...`);
-            const data = await this.loadAgentData(agent);
-            if (data) {
-                allData[agent] = data;
-                console.log(`Successfully added ${agent} to allData`);
-            } else {
-                console.log(`Failed to load data for ${agent}`);
-            }
-        }
-
-        console.log('Final allData:', Object.keys(allData));
-        this.agentData = allData;
-
-        // Load benchmark data (QQQ for US, SSE 50 for A-shares)
-        const benchmarkData = await this.loadBenchmarkData();
-        if (benchmarkData) {
-            allData[benchmarkData.name] = benchmarkData;
-            console.log(`Successfully added ${benchmarkData.name} to allData`);
-        }
-
-        const calcTime = performance.now() - calcStartTime;
-        const totalTime = performance.now() - startTime;
-
-        if (this.cacheManager.shouldShowPerformanceMetrics()) {
-            console.log(`%c⏱️  Live calculation time: ${calcTime.toFixed(2)}ms`, 'color: #ffbe0b; font-weight: bold');
-            console.log(`%c⏱️  Total data load time: ${totalTime.toFixed(2)}ms (live)`, 'color: #ff006e; font-weight: bold');
-
-            // Show potential speedup if cache was enabled
-            const cacheMetrics = this.cacheManager.getPerformanceMetrics();
-            if (cacheMetrics.lastLoadTime) {
-                const speedup = (totalTime / cacheMetrics.lastLoadTime).toFixed(1);
-                console.log(`%c💡 Cache would be ${speedup}x faster!`, 'color: #8338ec; font-weight: bold');
-            }
-        }
-
-        return allData;
+        return await this.loadAllAgentsDataViaApi();
     }
 
     // Get current holdings for an agent (latest position)
@@ -1036,17 +978,7 @@ class DataLoader {
         if (color) return color;
         return this.inferBrandColor(agentName);
     }
-
-    // Get cache manager instance
-    getCacheManager() {
-        return this.cacheManager;
-    }
 }
 
 // Export for use in other modules and expose globally
 window.DataLoader = DataLoader;
-
-// Expose cache manager globally for easy access
-if (typeof window !== 'undefined') {
-    window.cacheManager = new CacheManager();
-}

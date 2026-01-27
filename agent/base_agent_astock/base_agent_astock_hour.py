@@ -34,6 +34,7 @@ from prompts.agent_prompt_astock import STOP_SIGNAL, get_agent_system_prompt_ast
 from tools.general_tools import (extract_conversation, extract_tool_messages,
                                  get_config_value, write_config_value)
 from tools.price_tools import add_no_trade_record
+from tools.trading_logger import get_trading_logger
 
 # Load environment variables
 load_dotenv()
@@ -261,7 +262,10 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
         Args:
             today_date: Trading date with time (YYYY-MM-DD HH:MM:SS)
         """
-        print(f"📈 Starting A-shares hourly trading session: {today_date}")
+        # 获取日志记录器
+        trading_logger = get_trading_logger()
+        trading_logger.set_context(agent=self.signature, date=today_date)
+        trading_logger.log_trading_day_start(today_date)
 
         # Set up logging
         log_file = self._setup_logging(today_date)
@@ -285,7 +289,7 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
         current_step = 0
         while current_step < self.max_steps:
             current_step += 1
-            print(f"🔄 Step {current_step}/{self.max_steps}")
+            trading_logger.log_agent_step(current_step, self.max_steps)
 
             try:
                 # Call agent
@@ -296,8 +300,7 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
 
                 # Check stop signal
                 if STOP_SIGNAL in agent_response:
-                    print("✅ Received stop signal, trading session ended")
-                    print(agent_response)
+                    trading_logger.info("收到停止信号，交易会话结束")
                     self._log_message(log_file, [{"role": "assistant", "content": agent_response}])
                     break
 
@@ -319,12 +322,12 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
                 self._log_message(log_file, new_messages[1])
 
             except Exception as e:
-                print(f"❌ Trading session error: {str(e)}")
-                print(f"Error details: {e}")
+                trading_logger.error(f"交易会话错误: {str(e)}")
                 raise
 
         # Handle trading results
         await self._handle_trading_result(today_date)
+        trading_logger.log_trading_day_end(today_date)
 
     def _is_valid_astock_trading_time(self, timestamp: str) -> bool:
         """

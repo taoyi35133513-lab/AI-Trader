@@ -1,6 +1,6 @@
 # A 股数据源模块
 
-本模块提供统一的 A 股行情数据获取接口，支持 AKShare 和 Tushare 两种数据源，可通过配置灵活切换。
+本模块提供统一的 A 股行情数据获取接口，使用 AKShare 作为数据源（免费，无需 token）。
 
 ## 模块结构
 
@@ -9,7 +9,6 @@ data/A_stock/data_source/
 ├── __init__.py           # 工厂函数和模块导出
 ├── base.py               # 抽象基类定义
 ├── akshare_source.py     # AKShare 数据源实现
-├── tushare_source.py     # Tushare 数据源实现
 └── README.md             # 本文档
 ```
 
@@ -20,11 +19,8 @@ data/A_stock/data_source/
 ```python
 from data.A_stock.data_source import create_data_source
 
-# 使用 AKShare（推荐，免费无需 token）
+# 创建 AKShare 数据源
 source = create_data_source("akshare")
-
-# 使用 Tushare（需要 token）
-source = create_data_source("tushare")
 ```
 
 ### 2. 获取数据
@@ -58,7 +54,7 @@ create_data_source(source_type: str = "akshare", **kwargs) -> AStockDataSource
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| source_type | str | 数据源类型："akshare" 或 "tushare" |
+| source_type | str | 数据源类型，仅支持 "akshare" |
 | **kwargs | dict | 传递给数据源构造函数的参数 |
 
 ### 数据源接口
@@ -113,23 +109,22 @@ create_data_source(source_type: str = "akshare", **kwargs) -> AStockDataSource
 
 **返回值**：DataFrame，格式同 `get_stock_daily()`
 
-## 数据源对比
+## AKShare 特性
 
-| 特性 | AKShare | Tushare |
-|------|---------|---------|
-| 是否需要 Token | 否 | 是 |
-| 批量获取 | 逐个获取 | 支持批量 |
-| 请求限制 | 较宽松 | 6000条/次 |
-| 数据延迟 | 实时 | 实时 |
-| 推荐场景 | 日常使用 | 大批量获取 |
+| 特性 | 说明 |
+|------|------|
+| 是否需要 Token | 否（免费） |
+| 请求限制 | 较宽松 |
+| 数据延迟 | 实时 |
+| 推荐场景 | 所有场景 |
 
 ## API 映射关系
 
-| 功能 | Tushare API | AKShare API |
-|------|-------------|-------------|
-| 指数成分股 | `pro.index_weight()` | `ak.index_stock_cons_weight_csindex()` |
-| 个股日线 | `pro.daily()` | `ak.stock_zh_a_hist()` |
-| 指数日线 | `pro.index_daily()` | `ak.index_zh_a_hist()` |
+| 功能 | AKShare API |
+|------|-------------|
+| 指数成分股 | `ak.index_stock_cons_weight_csindex()` |
+| 个股日线 | `ak.stock_zh_a_hist()` |
+| 指数日线 | `ak.index_zh_a_hist()` |
 
 ## 数据格式转换
 
@@ -170,43 +165,17 @@ code = AStockDataSource.convert_code_to_plain("600519.SH")  # -> "600519"
     "max_retries": 3,
     "retry_delay": 1.0,
     "request_interval": 0.5
-  },
-  "tushare": {
-    "api_url": "http://tushare.xyz:5000",
-    "max_retries": 3,
-    "retry_delay": 5,
-    "timeout": 120
   }
-}
-```
-
-### configs/astock_config.json
-
-在配置文件中指定数据源：
-
-```json
-{
-  "agent_type": "BaseAgentAStock",
-  "market": "cn",
-  "data_source": "akshare",
-  ...
 }
 ```
 
 ## 入口脚本
 
-### 使用 AKShare 获取数据
+### 获取数据
 
 ```bash
 cd data/A_stock
 python get_daily_price_akshare.py
-```
-
-### 使用 Tushare 获取数据
-
-```bash
-cd data/A_stock
-python get_daily_price_tushare.py
 ```
 
 ## 支持的指数
@@ -219,10 +188,9 @@ python get_daily_price_tushare.py
 
 ## 错误处理
 
-所有数据源实现都包含重试机制：
+数据源实现包含重试机制：
 
 - **AKShare**: 默认重试 3 次，间隔 1 秒
-- **Tushare**: 默认重试 3 次，间隔 5 秒（指数退避）
 
 获取失败时返回空 DataFrame，不会抛出异常。
 
@@ -254,7 +222,5 @@ class XXXDataSource(AStockDataSource):
 
 ```
 akshare>=1.10.0
-tushare>=1.2.0  # 可选，仅使用 Tushare 时需要
 pandas>=1.0.0
-python-dotenv>=0.19.0
 ```

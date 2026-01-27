@@ -37,6 +37,9 @@ async def get_dashboard(
     for agent in agents:
         history = agent_service.get_agent_asset_history(agent["name"], market)
         if history.get("history"):
+            # 获取 positions 数据并添加到 history
+            positions = agent_service.get_agent_positions(agent["name"], market)
+            history["positions"] = positions
             asset_histories.append(history)
 
     # 获取排行榜

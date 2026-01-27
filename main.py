@@ -2,8 +2,9 @@ import argparse
 import asyncio
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -16,6 +17,7 @@ DEFAULT_MAX_STEPS = 30
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_BASE_DELAY = 1.0
 DEFAULT_INITIAL_CASH = 100000.0
+DEFAULT_START_DAYS_AGO = 30  # Default lookback period for new agents
 
 # Agent class mapping table - for dynamic import and instantiation (A-stock only)
 AGENT_REGISTRY = {
@@ -114,6 +116,173 @@ def derive_signature(model_name: str, frequency: str) -> str:
     return f"{model_name}{suffix}"
 
 
+def get_latest_trading_day(frequency: str) -> Optional[str]:
+    """Get the latest trading day from price data (merged.jsonl)
+
+    Args:
+        frequency: 'daily' or 'hourly'
+
+    Returns:
+        Latest trading date/timestamp:
+        - For daily: YYYY-MM-DD format
+        - For hourly: YYYY-MM-DD HH:MM:SS format
+    """
+    # Determine the merged file path
+    if frequency == "hourly":
+        merged_file = Path(__file__).parent / "data" / "A_stock" / "merged_hourly.jsonl"
+    else:
+        merged_file = Path(__file__).parent / "data" / "A_stock" / "merged.jsonl"
+
+    if not merged_file.exists():
+        print(f"Warning: Price data file not found: {merged_file}")
+        return None
+
+    latest_date = None
+    try:
+        with open(merged_file, "r") as f:
+            for line in f:
+                data = json.loads(line)
+                # Support both formats: "Time Series (Daily)" and "Time Series (60min)"
+                prices = data.get("Time Series (Daily)",
+                                 data.get("Time Series (60min)",
+                                         data.get("prices", {})))
+                for date_str in prices.keys():
+                    if frequency == "hourly":
+                        # For hourly, keep full timestamp (YYYY-MM-DD HH:MM:SS)
+                        if latest_date is None or date_str > latest_date:
+                            latest_date = date_str
+                    else:
+                        # For daily, just keep date part
+                        date_part = date_str.split(" ")[0] if " " in date_str else date_str
+                        if latest_date is None or date_part > latest_date:
+                            latest_date = date_part
+    except Exception as e:
+        print(f"Warning: Failed to read price data: {e}")
+        return None
+
+    return latest_date
+
+
+def get_latest_position_date(signature: str, frequency: str) -> Optional[str]:
+    """Get the latest position date for a given agent signature
+
+    Args:
+        signature: Agent signature (e.g., 'gemini-2.5-flash')
+        frequency: 'daily' or 'hourly'
+
+    Returns:
+        Latest position date/timestamp:
+        - For daily: YYYY-MM-DD format
+        - For hourly: YYYY-MM-DD HH:MM:SS format
+    """
+    log_path = derive_log_path(frequency)
+    position_file = Path(log_path) / signature / "position" / "position.jsonl"
+
+    if not position_file.exists():
+        return None
+
+    latest_date = None
+    try:
+        with open(position_file, "r") as f:
+            for line in f:
+                data = json.loads(line)
+                date_str = data.get("date", "")
+                if frequency == "hourly":
+                    # For hourly, keep full timestamp
+                    if date_str and (latest_date is None or date_str > latest_date):
+                        latest_date = date_str
+                else:
+                    # For daily, just keep date part
+                    date_part = date_str.split(" ")[0] if " " in date_str else date_str
+                    if date_part and (latest_date is None or date_part > latest_date):
+                        latest_date = date_part
+    except Exception as e:
+        print(f"Warning: Failed to read position file for {signature}: {e}")
+        return None
+
+    return latest_date
+
+
+def get_next_hourly_timestamp(timestamp: str) -> str:
+    """Get the next hourly trading timestamp
+
+    A-share hourly trading times: 10:30, 11:30, 14:00, 15:00
+
+    Args:
+        timestamp: Current timestamp in YYYY-MM-DD HH:MM:SS format
+
+    Returns:
+        Next trading timestamp in YYYY-MM-DD HH:MM:SS format
+    """
+    TRADING_HOURS = ["10:30:00", "11:30:00", "14:00:00", "15:00:00"]
+
+    dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+    current_time = dt.strftime("%H:%M:%S")
+    current_date = dt.strftime("%Y-%m-%d")
+
+    # Find the next trading hour
+    for i, hour in enumerate(TRADING_HOURS):
+        if current_time < hour:
+            return f"{current_date} {hour}"
+
+    # Move to next trading day (skip weekends)
+    next_day = dt + timedelta(days=1)
+    while next_day.weekday() >= 5:  # Saturday=5, Sunday=6
+        next_day += timedelta(days=1)
+
+    return f"{next_day.strftime('%Y-%m-%d')} {TRADING_HOURS[0]}"
+
+
+def calculate_date_range(signature: str, frequency: str) -> tuple[str, str]:
+    """Calculate the date range for trading
+
+    Logic:
+    - End date: Latest available trading day in price data, or today
+    - Start date: Next timestamp after the latest position, or DEFAULT_START_DAYS_AGO days before end date
+
+    Args:
+        signature: Agent signature
+        frequency: 'daily' or 'hourly'
+
+    Returns:
+        Tuple of (start_date, end_date):
+        - For daily: YYYY-MM-DD format
+        - For hourly: YYYY-MM-DD HH:MM:SS format
+    """
+    # Get end date (latest trading day or today)
+    end_date = get_latest_trading_day(frequency)
+    if end_date is None:
+        if frequency == "hourly":
+            end_date = datetime.now().strftime("%Y-%m-%d 15:00:00")
+        else:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+
+    # Get start date (next timestamp after latest position, or default lookback)
+    latest_position = get_latest_position_date(signature, frequency)
+
+    if latest_position:
+        if frequency == "hourly":
+            # For hourly, get the next trading timestamp
+            start_date = get_next_hourly_timestamp(latest_position)
+        else:
+            # For daily, start from the day after the latest position
+            latest_dt = datetime.strptime(latest_position, "%Y-%m-%d")
+            start_dt = latest_dt + timedelta(days=1)
+            start_date = start_dt.strftime("%Y-%m-%d")
+    else:
+        # No existing positions - start from DEFAULT_START_DAYS_AGO days ago
+        if frequency == "hourly":
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d %H:%M:%S")
+            start_dt = end_dt - timedelta(days=DEFAULT_START_DAYS_AGO)
+            start_date = f"{start_dt.strftime('%Y-%m-%d')} 10:30:00"
+        else:
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+            start_dt = end_dt - timedelta(days=DEFAULT_START_DAYS_AGO)
+            start_date = start_dt.strftime("%Y-%m-%d")
+
+    return start_date, end_date
+
+
 async def main(config_path=None, frequency_override=None):
     """Run trading experiment using BaseAgent class
 
@@ -142,32 +311,9 @@ async def main(config_path=None, frequency_override=None):
     market = config.get("market", "cn")
     print(f"Market type: {market} (frequency: {frequency})")
 
-    # Get date range from configuration file
-    INIT_DATE = config["date_range"]["init_date"]
-    END_DATE = config["date_range"]["end_date"]
-
-    # Environment variables can override dates in configuration file
-    if os.getenv("INIT_DATE"):
-        INIT_DATE = os.getenv("INIT_DATE")
-        print(f"Using environment variable to override INIT_DATE: {INIT_DATE}")
-    if os.getenv("END_DATE"):
-        END_DATE = os.getenv("END_DATE")
-        print(f"Using environment variable to override END_DATE: {END_DATE}")
-
-    # Validate date range
-    if ' ' in INIT_DATE:
-        INIT_DATE_obj = datetime.strptime(INIT_DATE, "%Y-%m-%d %H:%M:%S")
-    else:
-        INIT_DATE_obj = datetime.strptime(INIT_DATE, "%Y-%m-%d")
-
-    if ' ' in END_DATE:
-        END_DATE_obj = datetime.strptime(END_DATE, "%Y-%m-%d %H:%M:%S")
-    else:
-        END_DATE_obj = datetime.strptime(END_DATE, "%Y-%m-%d")
-
-    if INIT_DATE_obj > END_DATE_obj:
-        print("INIT_DATE is greater than END_DATE")
-        exit(1)
+    # Get latest trading day for display
+    latest_trading_day = get_latest_trading_day(frequency)
+    print(f"Latest available trading day: {latest_trading_day or 'unknown'}")
 
     # Get model list from configuration file (only select enabled models)
     enabled_models = [model for model in config["models"] if model.get("enabled", False)]
@@ -186,7 +332,6 @@ async def main(config_path=None, frequency_override=None):
 
     print("Starting trading experiment")
     print(f"Agent type: {agent_type}")
-    print(f"Date range: {INIT_DATE} to {END_DATE}")
     print(f"Model list: {model_names}")
     print(f"Agent config: max_steps={max_steps}, max_retries={max_retries}, base_delay={base_delay}, initial_cash={initial_cash}")
 
@@ -203,10 +348,14 @@ async def main(config_path=None, frequency_override=None):
         # Derive signature from model name and frequency
         signature = derive_signature(model_name, frequency)
 
+        # Calculate date range for this specific agent
+        init_date, end_date = calculate_date_range(signature, frequency)
+
         print("=" * 60)
         print(f"Processing model: {model_name}")
         print(f"Signature: {signature}")
         print(f"BaseModel: {basemodel}")
+        print(f"Date range: {init_date} to {end_date} (auto-calculated)")
 
         project_root = Path(__file__).resolve().parent
 
@@ -218,7 +367,7 @@ async def main(config_path=None, frequency_override=None):
             runtime_env_path = _resolve_runtime_env_path()
             if os.path.exists(runtime_env_path):
                 os.remove(runtime_env_path)
-                print(f"Position file not found, cleared config for fresh start from {INIT_DATE}")
+                print(f"Position file not found, starting fresh from {init_date}")
 
         # Write config values to shared config file
         write_config_value("SIGNATURE", signature)
@@ -240,7 +389,7 @@ async def main(config_path=None, frequency_override=None):
                 max_retries=max_retries,
                 base_delay=base_delay,
                 initial_cash=initial_cash,
-                init_date=INIT_DATE,
+                init_date=init_date,
                 openai_base_url=openai_base_url,
                 openai_api_key=openai_api_key
             )
@@ -249,7 +398,7 @@ async def main(config_path=None, frequency_override=None):
 
             await agent.initialize()
             print("Initialization successful")
-            await agent.run_date_range(INIT_DATE, END_DATE)
+            await agent.run_date_range(init_date, end_date)
 
             summary = agent.get_position_summary()
             currency_symbol = "CNY" if market == "cn" else "USD"

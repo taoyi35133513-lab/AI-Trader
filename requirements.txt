@@ -4,14 +4,13 @@ langchain-mcp-adapters>=0.1.0
 fastmcp==2.12.5
 pyyaml
 
-# A_stock
-tushare
+# A_stock data source
+akshare
 efinance
 
 # Scheduled trading
 apscheduler>=3.10.0
 pytz
-akshare
 
 # Database
 duckdb>=1.0.0

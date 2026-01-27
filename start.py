@@ -1,16 +1,37 @@
 #!/usr/bin/env python3
 """
 AI-Trader Unified Startup Script (A-Stock Only)
-Consolidates data preparation, MCP services, and trading agent into one script.
+Consolidates data preparation, backend services, and trading agent into one script.
+
+Architecture (v2.1):
+- Single FastAPI backend hosts REST API + MCP services + Scheduler on port 8888
+- Supports both backtest mode (date range) and live trading mode (scheduled)
+- Agent connects to unified backend at http://localhost:8888
 
 Usage:
-    python start.py                           # Default: A-stock daily
-    python start.py -f hourly                 # A-stock hourly
+    python start.py                           # Default: A-stock daily backtest
+    python start.py -f hourly                 # A-stock hourly backtest
     python start.py --skip-data               # Skip data preparation
-    python start.py --only-mcp                # Only start MCP services
-    python start.py --only-agent              # Only start agent (MCP must be running)
-    python start.py --ui                      # Start web UI after agent
+    python start.py --only-backend            # Only start unified backend
+    python start.py --only-agent              # Only start agent (backend must be running)
+    python start.py --ui                      # Also start static web UI
     python start.py --debug                   # Verbose debug output
+    python start.py --legacy-mcp              # Use legacy separate MCP services
+
+    # New: Live Trading Mode
+    python start.py --live                    # Start backend + live trading scheduler
+    python start.py --live -f hourly          # Live trading with hourly frequency
+
+Live Trading Mode (--live):
+    Starts the unified backend with live trading scheduler.
+    - Scheduler automatically executes trading sessions at configured times
+    - Daily: 09:35 (5 min after market open)
+    - Hourly: 10:35, 11:35, 14:05, 15:05
+    - Uses "-live" suffix in signatures to separate from backtest data
+
+Legacy mode (--legacy-mcp):
+    Uses the old architecture with separate MCP service processes on ports 8000-8003.
+    Set UNIFIED_MCP_MODE=false to make agents use legacy mode by default.
 """
 
 import argparse
@@ -89,47 +110,180 @@ def get_config_path(freq: str) -> Path:
     return PROJECT_ROOT / "configs" / "config.json"
 
 
-def prepare_data(freq: str, debug: bool = False):
-    """Prepare A-stock data"""
-    log("Preparing A-stock data...", "step")
+def validate_data(freq: str, fix_missing: bool = False, debug: bool = False) -> bool:
+    """Validate data completeness after preparation
+
+    Args:
+        freq: Trading frequency ("daily" or "hourly")
+        fix_missing: Whether to automatically fix missing data
+        debug: Enable debug output
+
+    Returns:
+        True if data is valid or was fixed successfully
+    """
+    log("Validating data completeness...", "step")
+
+    data_dir = PROJECT_ROOT / "data" / "A_stock"
+    validate_script = data_dir / "validate_data.py"
+
+    if not validate_script.exists():
+        log("Validation script not found, skipping validation", "warning")
+        return True
+
+    cmd = [sys.executable, str(validate_script), "-f", freq]
+    success, stdout, stderr = run_command(cmd, cwd=data_dir, capture=True, debug=debug)
+
+    if debug:
+        print(stdout)
+
+    # Check for missing stocks
+    if "缺失股票" in stdout or "MISSING" in stdout.upper():
+        log("Found missing stock data!", "warning")
+
+        if fix_missing:
+            log("Attempting to fix missing data...", "info")
+            fix_cmd = [
+                sys.executable,
+                str(data_dir / "get_daily_price_akshare.py"),
+                "--fix-missing"
+            ]
+            fix_success, fix_stdout, fix_stderr = run_command(
+                fix_cmd, cwd=data_dir, capture=True, debug=debug
+            )
+
+            if debug:
+                print(fix_stdout)
+
+            if fix_success:
+                log("Missing data fixed successfully", "success")
+                # Re-run merge to update JSONL
+                log("Re-running merge to update JSONL...", "info")
+                merge_cmd = [sys.executable, str(data_dir / "merge_jsonl.py")]
+                run_command(merge_cmd, cwd=data_dir, debug=debug)
+                return True
+            else:
+                log("Failed to fix missing data", "error")
+                return False
+        else:
+            log("Run with --fix-missing to automatically fetch missing data", "info")
+            return False
+
+    log("Data validation passed", "success")
+    return True
+
+
+def prepare_data(freq: str, debug: bool = False, force: bool = False, fix_missing: bool = False):
+    """Prepare A-stock data (supports incremental updates)
+
+    Args:
+        freq: Trading frequency ("daily" or "hourly")
+        debug: Enable debug output
+        force: Force full data refresh, ignore existing data
+        fix_missing: Automatically fix missing stock data
+    """
+    if force:
+        log("Preparing A-stock data (FORCE full refresh)...", "step")
+    else:
+        log("Preparing A-stock data (incremental update)...", "step")
+
     data_dir = PROJECT_ROOT / "data" / "A_stock"
 
+    # Build script commands with appropriate flags
     if freq == "daily":
         scripts = [
-            "get_daily_price_tushare.py",
-            "merge_jsonl_tushare.py",
+            (["get_daily_price_akshare.py"] + (["--force"] if force else []), "Fetching daily prices"),
+            (["merge_jsonl.py"], "Converting to JSONL"),
         ]
     else:
         scripts = [
-            "get_daily_price_tushare.py",
-            "merge_jsonl_tushare.py",
-            "get_interdaily_price_astock.py",
-            "merge_jsonl_hourly.py",
+            (["get_daily_price_akshare.py"] + (["--force"] if force else []), "Fetching daily prices"),
+            (["merge_jsonl.py"], "Converting daily to JSONL"),
+            (["get_interdaily_price_astock.py"], "Fetching hourly prices"),
+            (["merge_jsonl_hourly.py"], "Converting hourly to JSONL"),
         ]
 
-    for script in scripts:
-        script_path = data_dir / script
+    for script_args, description in scripts:
+        script_name = script_args[0]
+        script_path = data_dir / script_name
         if not script_path.exists():
             log(f"Script not found: {script_path}", "error")
             return False
 
-        log(f"Running {script}...", "info")
-        success, _, stderr = run_command(
-            [sys.executable, str(script_path)],
-            cwd=data_dir,
-            debug=debug
-        )
-        if not success:
-            log(f"Failed to run {script}: {stderr}", "error")
+        log(f"{description} ({script_name})...", "info")
+        cmd = [sys.executable, str(script_path)] + script_args[1:]
+        success, stdout, stderr = run_command(cmd, cwd=data_dir, capture=True, debug=debug)
+
+        # Check output for "already up to date" message
+        if stdout and "数据已是最新" in stdout:
+            log(f"  ✅ Data already up to date, skipped", "info")
+        elif not success:
+            log(f"Failed to run {script_name}: {stderr}", "error")
             return False
+
+    # Validate data completeness after preparation
+    if not validate_data(freq, fix_missing=fix_missing, debug=debug):
+        log("Data validation found issues", "warning")
+        if not fix_missing:
+            log("Use --fix-missing to automatically fix missing data", "info")
 
     log("A-stock data prepared", "success")
     return True
 
 
-def start_mcp_services(background: bool = True, debug: bool = False):
-    """Start MCP services"""
-    log("Starting MCP services...", "step")
+def start_unified_backend(background: bool = True, debug: bool = False):
+    """Start unified FastAPI backend (REST API + MCP services)"""
+    log("Starting unified backend (FastAPI + MCP services)...", "step")
+
+    try:
+        cmd = [
+            sys.executable, "-m", "uvicorn",
+            "api.main:app",
+            "--host", "0.0.0.0",
+            "--port", "8888",
+        ]
+
+        if debug:
+            cmd.append("--reload")
+
+        if background:
+            # Start in background
+            log_dir = PROJECT_ROOT / "logs"
+            log_dir.mkdir(exist_ok=True)
+
+            with open(log_dir / "backend.log", "w") as log_file:
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=PROJECT_ROOT,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                )
+
+            log(f"Unified backend started in background (PID: {process.pid})", "success")
+            log(f"Backend URL: http://localhost:8888", "info")
+            log(f"API Docs: http://localhost:8888/docs", "info")
+            log(f"Log file: {log_dir / 'backend.log'}", "info")
+
+            # Wait for backend to be ready
+            log("Waiting for backend to initialize...", "info")
+            time.sleep(3)
+
+            return process
+        else:
+            # Start in foreground (blocking)
+            subprocess.run(cmd, cwd=PROJECT_ROOT)
+            return None
+    except Exception as e:
+        log(f"Failed to start unified backend: {e}", "error")
+        return None
+
+
+def start_legacy_mcp_services(background: bool = True, debug: bool = False):
+    """Start legacy MCP services (separate processes on different ports)"""
+    log("Starting legacy MCP services...", "step")
+    log("Note: Consider using unified backend instead (--no-legacy-mcp)", "warning")
+
+    # Set environment to use legacy mode
+    os.environ["UNIFIED_MCP_MODE"] = "false"
 
     mcp_script = PROJECT_ROOT / "agent_tools" / "start_mcp_services.py"
     if not mcp_script.exists():
@@ -150,7 +304,7 @@ def start_mcp_services(background: bool = True, debug: bool = False):
                     stderr=subprocess.STDOUT,
                 )
 
-            log(f"MCP services started in background (PID: {process.pid})", "success")
+            log(f"Legacy MCP services started in background (PID: {process.pid})", "success")
             log(f"Log file: {log_dir / 'mcp_services.log'}", "info")
 
             # Wait for services to be ready
@@ -166,7 +320,7 @@ def start_mcp_services(background: bool = True, debug: bool = False):
             )
             return None
     except Exception as e:
-        log(f"Failed to start MCP services: {e}", "error")
+        log(f"Failed to start legacy MCP services: {e}", "error")
         return None
 
 
@@ -198,8 +352,8 @@ def start_agent(config_path: Path, freq: str = "daily", debug: bool = False):
 
 
 def start_ui(debug: bool = False):
-    """Start web UI server"""
-    log("Starting web UI server...", "step")
+    """Start static web UI server (for frontend files in docs/)"""
+    log("Starting static web UI server...", "step")
 
     docs_dir = PROJECT_ROOT / "docs"
     if not docs_dir.exists():
@@ -207,13 +361,15 @@ def start_ui(debug: bool = False):
         return None
 
     try:
+        # Use port 8080 for static files (8888 is for backend)
         process = subprocess.Popen(
-            [sys.executable, "-m", "http.server", "8888"],
+            [sys.executable, "-m", "http.server", "8080"],
             cwd=docs_dir,
             stdout=subprocess.DEVNULL if not debug else None,
             stderr=subprocess.DEVNULL if not debug else None,
         )
-        log(f"Web UI started at http://localhost:8888 (PID: {process.pid})", "success")
+        log(f"Static web UI started at http://localhost:8080 (PID: {process.pid})", "success")
+        log("Note: Frontend should connect to API at http://localhost:8888", "info")
         return process
     except Exception as e:
         log(f"Failed to start web UI: {e}", "error")
@@ -238,14 +394,17 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python start.py                       # A-stock daily trading
+  python start.py                       # A-stock daily trading (unified backend)
   python start.py -f hourly             # A-stock hourly trading
   python start.py --skip-data           # Skip data preparation
-  python start.py --only-mcp            # Only start MCP services
+  python start.py --only-backend        # Only start unified backend
   python start.py --only-agent          # Only start agent
   python start.py -c configs/my.json    # Use custom config file
-  python start.py --ui                  # Also start web UI
+  python start.py --ui                  # Also start static web UI
   python start.py --debug               # Enable debug output
+  python start.py --legacy-mcp          # Use legacy separate MCP services
+  python start.py --validate-only       # Only validate data completeness
+  python start.py --fix-missing         # Auto-fix missing stock data
         """,
     )
 
@@ -269,9 +428,9 @@ Examples:
     )
 
     parser.add_argument(
-        "--skip-mcp",
+        "--skip-backend",
         action="store_true",
-        help="Skip MCP services startup (assume already running)",
+        help="Skip backend startup (assume already running)",
     )
 
     parser.add_argument(
@@ -281,27 +440,45 @@ Examples:
     )
 
     parser.add_argument(
-        "--only-mcp",
+        "--only-backend",
         action="store_true",
-        help="Only start MCP services (foreground, blocking)",
+        help="Only start unified backend (foreground, blocking)",
     )
 
     parser.add_argument(
         "--only-agent",
         action="store_true",
-        help="Only start agent (skip data and MCP)",
+        help="Only start agent (skip data and backend)",
     )
 
     parser.add_argument(
         "--only-data",
         action="store_true",
-        help="Only prepare data (skip MCP and agent)",
+        help="Only prepare data (skip backend and agent)",
+    )
+
+    parser.add_argument(
+        "--force-data",
+        action="store_true",
+        help="Force full data refresh (ignore existing data)",
+    )
+
+    parser.add_argument(
+        "--fix-missing",
+        action="store_true",
+        help="Automatically fix missing stock data during validation",
+    )
+
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Only validate data completeness, don't prepare or run agent",
     )
 
     parser.add_argument(
         "--ui",
         action="store_true",
-        help="Start web UI after agent finishes",
+        help="Start static web UI server",
     )
 
     parser.add_argument(
@@ -310,21 +487,60 @@ Examples:
         help="Enable debug output",
     )
 
+    parser.add_argument(
+        "--legacy-mcp",
+        action="store_true",
+        help="Use legacy separate MCP services instead of unified backend",
+    )
+
+    # Mode selection (mutually exclusive)
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--backtest",
+        action="store_true",
+        help="Backtest mode: run agents over date range (default behavior)",
+    )
+    mode_group.add_argument(
+        "--live",
+        action="store_true",
+        help="Live trading mode: start backend with scheduler for real-time trading",
+    )
+
+    # Keep old argument names for backwards compatibility
+    parser.add_argument("--skip-mcp", action="store_true", dest="skip_backend", help=argparse.SUPPRESS)
+    parser.add_argument("--only-mcp", action="store_true", help=argparse.SUPPRESS)
+
     args = parser.parse_args()
 
+    # Handle deprecated --only-mcp
+    if args.only_mcp:
+        log("--only-mcp is deprecated, use --only-backend or --legacy-mcp --only-backend", "warning")
+        args.only_backend = True
+        args.legacy_mcp = True
+
     # Print banner
+    mode_str = "Live Trading" if args.live else "Backtest"
     print(f"\n{Colors.BOLD}{Colors.CYAN}=" * 50)
-    print("     AI-Trader Unified Startup Script")
+    print(f"     AI-Trader Unified Startup Script v2.1")
+    print(f"              Mode: {mode_str}")
     print("=" * 50 + f"{Colors.RESET}\n")
 
     # Validate arguments
-    if args.only_mcp and (args.only_agent or args.only_data):
-        log("Cannot use --only-mcp with --only-agent or --only-data", "error")
+    if args.only_backend and (args.only_agent or args.only_data):
+        log("Cannot use --only-backend with --only-agent or --only-data", "error")
         return 1
 
     # Activate virtual environment
     if not activate_venv():
         return 1
+
+    # Set unified mode environment variable
+    if args.legacy_mcp:
+        os.environ["UNIFIED_MCP_MODE"] = "false"
+        log("Using legacy MCP mode (separate services)", "info")
+    else:
+        os.environ["UNIFIED_MCP_MODE"] = "true"
+        log("Using unified backend mode", "info")
 
     # Determine config path
     if args.config:
@@ -339,13 +555,13 @@ Examples:
     log(f"Market: A-Stock (CN), Frequency: {args.freq}", "info")
     log(f"Config: {config_path}", "info")
 
-    mcp_process = None
+    backend_process = None
     ui_process = None
 
     def cleanup(signum=None, frame=None):
         """Cleanup on exit"""
         print()  # New line after ^C
-        stop_process(mcp_process, "MCP services")
+        stop_process(backend_process, "Backend services")
         stop_process(ui_process, "Web UI")
         log("Cleanup complete", "success")
         sys.exit(0)
@@ -355,13 +571,26 @@ Examples:
 
     try:
         # Handle --only-* options
-        if args.only_mcp:
-            log("Starting MCP services in foreground...", "step")
-            start_mcp_services(background=False, debug=args.debug)
+        if args.only_backend:
+            log("Starting backend in foreground...", "step")
+            if args.legacy_mcp:
+                start_legacy_mcp_services(background=False, debug=args.debug)
+            else:
+                start_unified_backend(background=False, debug=args.debug)
             return 0
 
+        if args.validate_only:
+            log("Running data validation only...", "step")
+            is_valid = validate_data(args.freq, fix_missing=args.fix_missing, debug=args.debug)
+            if is_valid:
+                log("Data validation passed", "success")
+                return 0
+            else:
+                log("Data validation failed", "error")
+                return 1
+
         if args.only_data:
-            if not prepare_data(args.freq, args.debug):
+            if not prepare_data(args.freq, args.debug, force=args.force_data, fix_missing=args.fix_missing):
                 return 1
             log("Data preparation complete", "success")
             return 0
@@ -371,25 +600,50 @@ Examples:
                 return 1
             return 0
 
-        # Full startup flow
+        # Live trading mode
+        if args.live:
+            log("Starting Live Trading Mode...", "step")
+            log(f"Frequency: {args.freq}", "info")
+            log("Scheduler will auto-start when backend is ready", "info")
+            log("", "info")
+            log("API endpoints for scheduler control:", "info")
+            log("  GET  /api/live-trading/status  - Get scheduler status", "info")
+            log("  POST /api/live-trading/stop    - Stop scheduler", "info")
+            log("  POST /api/live-trading/start   - Restart scheduler", "info")
+            log("  POST /api/live-trading/trigger - Trigger immediate execution", "info")
+            log("", "info")
+
+            # Set environment variables to signal live mode (read by api/main.py)
+            os.environ["AI_TRADER_MODE"] = "live"
+            os.environ["AI_TRADER_FREQUENCY"] = args.freq
+
+            # Start backend in foreground (blocking) - scheduler auto-starts
+            start_unified_backend(background=False, debug=args.debug)
+            return 0
+
+        # Backtest mode (default)
 
         # Step 1: Data preparation
         if not args.skip_data:
-            if not prepare_data(args.freq, args.debug):
+            if not prepare_data(args.freq, args.debug, force=args.force_data, fix_missing=args.fix_missing):
                 log("Data preparation failed, but continuing...", "warning")
         else:
             log("Skipping data preparation", "info")
 
-        # Step 2: MCP services
-        if not args.skip_mcp:
-            mcp_process = start_mcp_services(background=True, debug=args.debug)
-            if not mcp_process:
-                log("Failed to start MCP services", "error")
+        # Step 2: Backend services
+        if not args.skip_backend:
+            if args.legacy_mcp:
+                backend_process = start_legacy_mcp_services(background=True, debug=args.debug)
+            else:
+                backend_process = start_unified_backend(background=True, debug=args.debug)
+
+            if not backend_process:
+                log("Failed to start backend services", "error")
                 return 1
         else:
-            log("Skipping MCP services startup", "info")
+            log("Skipping backend startup", "info")
 
-        # Step 3: Agent
+        # Step 3: Agent (backtest)
         if not args.skip_agent:
             if not start_agent(config_path, args.freq, args.debug):
                 log("Agent execution failed", "error")
