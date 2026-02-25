@@ -7,7 +7,7 @@ class DataLoader {
         this.priceCache = {};
         this.config = null;
         this.baseDataPath = './data';
-        this.currentMarket = 'us'; // 'us' or 'cn'
+        this.currentMarket = 'cn'; // 'us' or 'cn'
         this.apiBaseUrl = null;
         this.useApi = false;
     }
