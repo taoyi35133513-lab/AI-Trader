@@ -3,7 +3,7 @@ Configuration API endpoint for frontend consumption.
 Provides agent and market configuration without requiring YAML file generation.
 """
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter
 
@@ -81,6 +81,34 @@ def _display_name(model_name: str) -> str:
     return model_name
 
 
+def _resolve_model_name(model: dict) -> Optional[str]:
+    """Resolve a stable model name from flexible config formats."""
+    if not isinstance(model, dict):
+        return None
+
+    name = model.get("name") or model.get("signature")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+
+    # Fallback: derive from basemodel (e.g. "openai/gpt-5" -> "gpt-5")
+    basemodel = model.get("basemodel")
+    if isinstance(basemodel, str) and basemodel.strip():
+        return basemodel.split("/")[-1].strip()
+
+    return None
+
+
+def _iter_valid_models(config: dict):
+    """Yield normalized model entries and skip invalid items safely."""
+    for raw in config.get("models", []):
+        if not isinstance(raw, dict):
+            continue
+        name = _resolve_model_name(raw)
+        if not name:
+            continue
+        yield raw, name
+
+
 @router.get("")
 async def get_config(frequency: str = "daily"):
     """
@@ -100,9 +128,8 @@ async def get_config(frequency: str = "daily"):
 
     # Build agents list from enabled models
     agents = []
-    for model in config.get("models", []):
+    for model, name in _iter_valid_models(config):
         if model.get("enabled", False):
-            name = model["name"]
             provider = _get_provider(name)
             # Derive folder/signature based on frequency
             folder = f"{name}-astock-hour" if frequency == "hourly" else name
@@ -178,10 +205,9 @@ async def get_full_config():
     # Build agents list for each market/frequency
     def build_agents(frequency: str, enabled_only: bool = False):
         agents = []
-        for model in config.get("models", []):
+        for model, name in _iter_valid_models(config):
             if enabled_only and not model.get("enabled", False):
                 continue
-            name = model["name"]
             provider = _get_provider(name)
             folder = f"{name}-astock-hour" if frequency == "hourly" else name
             agents.append({
@@ -268,8 +294,7 @@ async def get_models():
     config = load_config_json("config.json")
 
     models = []
-    for model in config.get("models", []):
-        name = model["name"]
+    for model, name in _iter_valid_models(config):
         provider = _get_provider(name)
         models.append({
             "name": name,
