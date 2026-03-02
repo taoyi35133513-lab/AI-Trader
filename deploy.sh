@@ -441,6 +441,14 @@ do_nginx() {
         fi
     fi
 
+    # SELinux: allow Nginx to read static files and proxy to backend
+    if command -v getenforce &>/dev/null && [[ "$(getenforce 2>/dev/null)" != "Disabled" ]]; then
+        info "Configuring SELinux for Nginx..."
+        sudo setsebool -P httpd_can_network_connect 1 2>/dev/null || true
+        sudo chcon -R -t httpd_sys_content_t "${PROJECT_DIR}/docs/" 2>/dev/null || true
+        ok "SELinux configured"
+    fi
+
     # Validate and reload
     if sudo nginx -t 2>&1; then
         ok "Nginx config syntax valid"
