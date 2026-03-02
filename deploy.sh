@@ -150,6 +150,21 @@ http_check() {
     fi
 }
 
+# ─── Ensure Poetry ────────────────────────────────────────────────────────────
+
+ensure_poetry() {
+    if command -v poetry &>/dev/null; then
+        return 0
+    fi
+    info "Installing Poetry..."
+    python3 -m pip install --user poetry -q 2>/dev/null || pip3 install poetry -q
+    if ! command -v poetry &>/dev/null; then
+        err "Poetry installation failed. Install manually: https://python-poetry.org/docs/#installation"
+        exit 1
+    fi
+    ok "Poetry installed"
+}
+
 # ─── Install ───────────────────────────────────────────────────────────────────
 
 do_install() {
@@ -163,14 +178,7 @@ do_install() {
     ok "git found"
 
     step "2. Setting up Poetry"
-    if ! command -v poetry &>/dev/null; then
-        info "Installing Poetry..."
-        python3 -m pip install --user poetry -q 2>/dev/null || pip3 install poetry -q
-    fi
-    if ! command -v poetry &>/dev/null; then
-        err "Poetry installation failed. Install manually: https://python-poetry.org/docs/#installation"
-        exit 1
-    fi
+    ensure_poetry
     ok "Poetry $(poetry --version | awk '{print $NF}') found"
 
     step "3. Installing Python dependencies"
@@ -247,9 +255,17 @@ do_stop() {
 # ─── Start ─────────────────────────────────────────────────────────────────────
 
 do_start() {
-    # Ensure prerequisites
+    # Ensure virtual environment exists, create with Poetry if missing
     if [[ ! -x "$PYTHON" ]]; then
-        err "Virtual environment not found at ${VENV_DIR}. Run: $0 --install"
+        warn "Virtual environment not found at ${VENV_DIR}, setting up with Poetry..."
+        ensure_poetry
+        export POETRY_VIRTUALENVS_IN_PROJECT=true
+        poetry install
+        ok "Virtual environment created"
+    fi
+
+    if [[ ! -x "$PYTHON" ]]; then
+        err "Failed to create virtual environment. Run: $0 --install"
         exit 1
     fi
 
