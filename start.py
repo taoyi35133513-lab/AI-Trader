@@ -93,7 +93,7 @@ def activate_venv():
     venv_path = PROJECT_ROOT / ".venv"
     if not venv_path.exists():
         log("Virtual environment .venv not found!", "error")
-        log("Please create it with: python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt", "info")
+        log("Please install dependencies with: poetry install", "info")
         return False
 
     # Update PATH for subprocess calls

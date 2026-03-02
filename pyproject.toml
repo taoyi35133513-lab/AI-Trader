@@ -1,0 +1,43 @@
+[project]
+name = "ai-trader"
+version = "2.1.0"
+description = "Autonomous AI trading agent system for SSE 50 (A-shares)"
+readme = "README.md"
+requires-python = ">=3.10,<4.0"
+
+dependencies = [
+    # Agent framework
+    "langchain==1.0.2",
+    "langchain-openai==1.0.1",
+    "langchain-mcp-adapters>=0.1.0",
+    # MCP tool protocol
+    "fastmcp==2.12.5",
+    # Config
+    "pyyaml",
+    # A-stock data source
+    "akshare",
+    "efinance",
+    # Scheduled trading
+    "apscheduler>=3.10.0",
+    "pytz",
+    # Database
+    "duckdb>=1.0.0",
+    # API
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic-settings>=2.0.0",
+]
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+pytest-asyncio = "*"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

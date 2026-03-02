@@ -25,7 +25,6 @@ BACKEND_PORT=8888
 NGINX_CONF="${PROJECT_DIR}/nginx/ai-trader.conf"
 
 PYTHON="${VENV_DIR}/bin/python"
-PIP="${VENV_DIR}/bin/pip"
 UVICORN="${VENV_DIR}/bin/uvicorn"
 
 # Defaults
@@ -163,19 +162,21 @@ do_install() {
     fi
     ok "git found"
 
-    step "2. Creating virtual environment"
-    if [[ ! -d "$VENV_DIR" ]]; then
-        python3 -m venv "$VENV_DIR"
-        ok "Created venv at ${VENV_DIR}"
-    else
-        ok "Venv already exists"
+    step "2. Setting up Poetry"
+    if ! command -v poetry &>/dev/null; then
+        info "Installing Poetry..."
+        python3 -m pip install --user poetry -q 2>/dev/null || pip3 install poetry -q
     fi
+    if ! command -v poetry &>/dev/null; then
+        err "Poetry installation failed. Install manually: https://python-poetry.org/docs/#installation"
+        exit 1
+    fi
+    ok "Poetry $(poetry --version | awk '{print $NF}') found"
 
     step "3. Installing Python dependencies"
-    "$PIP" install --upgrade pip -q
-    "$PIP" install -r "${PROJECT_DIR}/requirements.txt" -q
-    # pytest for test verification
-    "$PIP" install pytest pytest-asyncio -q
+    # Ensure venv is created inside the project (.venv/)
+    export POETRY_VIRTUALENVS_IN_PROJECT=true
+    poetry install
     ok "Dependencies installed"
 
     step "4. Verifying .env file"
