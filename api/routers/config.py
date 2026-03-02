@@ -282,7 +282,7 @@ async def get_full_config():
         },
         "api": {
             "enabled": True,
-            "base_url": "http://localhost:8888",
+            "base_url": "",
             "fallback_to_files": False
         }
     }
