@@ -406,19 +406,30 @@ do_nginx() {
         exit 1
     fi
 
-    # Generate config with actual project path
-    local target="/etc/nginx/sites-available/ai-trader"
-    info "Writing Nginx config to ${target}"
-    sed "s|__PROJECT_DIR__|${PROJECT_DIR}|g" "$NGINX_CONF" | sudo tee "$target" > /dev/null
-
-    # Enable site
-    sudo mkdir -p /etc/nginx/sites-enabled
-    sudo ln -sf "$target" /etc/nginx/sites-enabled/ai-trader
-
-    # Remove default site if it exists
-    if [[ -f /etc/nginx/sites-enabled/default ]]; then
-        sudo rm -f /etc/nginx/sites-enabled/default
-        info "Removed default Nginx site"
+    # Generate config — auto-detect Debian (sites-available) vs RHEL (conf.d) layout
+    local target
+    if [[ -d /etc/nginx/sites-available ]]; then
+        # Debian/Ubuntu layout
+        target="/etc/nginx/sites-available/ai-trader"
+        info "Writing Nginx config to ${target}"
+        sed "s|__PROJECT_DIR__|${PROJECT_DIR}|g" "$NGINX_CONF" | sudo tee "$target" > /dev/null
+        sudo mkdir -p /etc/nginx/sites-enabled
+        sudo ln -sf "$target" /etc/nginx/sites-enabled/ai-trader
+        # Remove default site if it exists
+        if [[ -f /etc/nginx/sites-enabled/default ]]; then
+            sudo rm -f /etc/nginx/sites-enabled/default
+            info "Removed default Nginx site"
+        fi
+    else
+        # RHEL/CentOS layout — use conf.d/
+        target="/etc/nginx/conf.d/ai-trader.conf"
+        info "Writing Nginx config to ${target}"
+        sed "s|__PROJECT_DIR__|${PROJECT_DIR}|g" "$NGINX_CONF" | sudo tee "$target" > /dev/null
+        # Disable default server if present
+        if [[ -f /etc/nginx/conf.d/default.conf ]]; then
+            sudo mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.bak
+            info "Disabled default Nginx server"
+        fi
     fi
 
     # Validate and reload
