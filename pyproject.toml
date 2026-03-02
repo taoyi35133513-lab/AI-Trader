@@ -21,11 +21,15 @@ dependencies = [
     "apscheduler>=3.10.0",
     "pytz",
     # Database
-    "duckdb>=1.0.0",
+    "duckdb>=1.0.0,<=1.2.2",
     # API
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
     "pydantic-settings>=2.0.0",
+    # Upper bounds for CentOS 7 binary wheel compatibility (manylinux_2_17)
+    "numpy<=2.2.6",
+    "pandas<=2.3.2",
+    "tiktoken>=0.7,<=0.11.0",
 ]
 
 [tool.poetry]

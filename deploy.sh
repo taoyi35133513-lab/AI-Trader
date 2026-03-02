@@ -229,6 +229,18 @@ do_install() {
     # Fix SSL certificate issues on servers with outdated CA bundles
     setup_ssl_certs
 
+    # Enforce binary wheel installation for C-extension packages.
+    # Prevents source compilation failures on CentOS 7 (GCC 4.8.5 / no Rust).
+    export PIP_ONLY_BINARY="numpy,pandas,duckdb,tiktoken"
+    export PIP_PREFER_BINARY=1
+
+    # Pre-install C-extension packages via pip to bypass Poetry build isolation
+    info "Pre-installing native packages from binary wheels..."
+    "${VENV_DIR}/bin/pip" install --only-binary :all: \
+        "numpy<=2.2.6" "pandas<=2.3.2" "duckdb>=1.0.0,<=1.2.2" "tiktoken>=0.7,<=0.11.0" -q 2>&1 \
+        && ok "Native packages pre-installed" \
+        || warn "Pre-install had issues, Poetry will retry"
+
     # Use pip-based installer for reliable wheel downloads on older servers
     export POETRY_INSTALLER_MODERN_INSTALLATION=false
     poetry install
@@ -310,6 +322,10 @@ do_start() {
         "${PYTHON3_CMD}" -m venv "$VENV_DIR"
         "${VENV_DIR}/bin/python" -m pip install --upgrade pip setuptools -q
         setup_ssl_certs
+        export PIP_ONLY_BINARY="numpy,pandas,duckdb,tiktoken"
+        export PIP_PREFER_BINARY=1
+        "${VENV_DIR}/bin/pip" install --only-binary :all: \
+            "numpy<=2.2.6" "pandas<=2.3.2" "duckdb>=1.0.0,<=1.2.2" "tiktoken>=0.7,<=0.11.0" -q 2>/dev/null || true
         export POETRY_INSTALLER_MODERN_INSTALLATION=false
         poetry install
         ok "Virtual environment created"
