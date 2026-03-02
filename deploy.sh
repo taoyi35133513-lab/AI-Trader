@@ -30,7 +30,7 @@ PYTHON3_CMD="python3"    # Updated by check_python() to the best available Pytho
 
 # Defaults
 FREQUENCY="daily"
-MODE="backtest"
+MODE="live"
 ACTION="deploy"      # deploy | install | start | verify | stop
 
 # ─── Colors ────────────────────────────────────────────────────────────────────
@@ -441,11 +441,22 @@ do_nginx() {
         fi
     fi
 
+    # Fix permissions: Nginx needs read + execute on the entire path chain
+    info "Setting file permissions for Nginx..."
+    chmod o+x "${PROJECT_DIR}" 2>/dev/null || true
+    chmod -R o+rX "${PROJECT_DIR}/docs/" 2>/dev/null || true
+
     # SELinux: allow Nginx to read static files and proxy to backend
     if command -v getenforce &>/dev/null && [[ "$(getenforce 2>/dev/null)" != "Disabled" ]]; then
         info "Configuring SELinux for Nginx..."
         sudo setsebool -P httpd_can_network_connect 1 2>/dev/null || true
         sudo chcon -R -t httpd_sys_content_t "${PROJECT_DIR}/docs/" 2>/dev/null || true
+        # Also label parent dirs so Nginx can traverse the path
+        local d="${PROJECT_DIR}"
+        while [[ "$d" != "/" ]]; do
+            sudo chcon -t httpd_sys_content_t "$d" 2>/dev/null || true
+            d=$(dirname "$d")
+        done
         ok "SELinux configured"
     fi
 
