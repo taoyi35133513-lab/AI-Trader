@@ -14,8 +14,8 @@ dependencies = [
     "fastmcp==2.12.5",
     # Config
     "pyyaml",
-    # A-stock data source
-    "akshare",
+    # A-stock data source (<=1.17.94 uses aiohttp instead of curl-cffi, avoids build on CentOS 7)
+    "akshare<=1.17.94",
     "efinance",
     # Scheduled trading
     "apscheduler>=3.10.0",

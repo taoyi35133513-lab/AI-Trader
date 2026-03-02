@@ -241,11 +241,6 @@ do_install() {
         && ok "Native packages pre-installed" \
         || warn "Pre-install had issues, Poetry will retry"
 
-    # curl-cffi has no manylinux_2_17 wheel; install separately (allow source build)
-    "${VENV_DIR}/bin/pip" install curl-cffi -q 2>&1 \
-        && ok "curl-cffi installed" \
-        || warn "curl-cffi will be installed by Poetry"
-
     # Use pip-based installer for reliable wheel downloads on older servers
     export POETRY_INSTALLER_MODERN_INSTALLATION=false
     poetry install
@@ -331,7 +326,6 @@ do_start() {
         export PIP_PREFER_BINARY=1
         "${VENV_DIR}/bin/pip" install --only-binary :all: \
             "numpy<=2.2.6" "pandas<=2.3.2" "duckdb>=1.0.0,<=1.2.2" "tiktoken>=0.7,<=0.11.0" -q 2>/dev/null || true
-        "${VENV_DIR}/bin/pip" install curl-cffi -q 2>/dev/null || true
         export POETRY_INSTALLER_MODERN_INSTALLATION=false
         poetry install
         ok "Virtual environment created"
