@@ -155,6 +155,34 @@ http_check() {
     fi
 }
 
+# ─── Setup SSL Certs ──────────────────────────────────────────────────────────
+
+setup_ssl_certs() {
+    # On servers with outdated CA bundles, SSL downloads fail.
+    # Try system CA files first, then fall back to certifi.
+    local cert_path=""
+    for ca in /etc/ssl/certs/ca-certificates.crt \
+              /etc/pki/tls/certs/ca-bundle.crt \
+              /etc/ssl/cert.pem; do
+        if [[ -f "$ca" ]]; then
+            cert_path="$ca"
+            break
+        fi
+    done
+
+    if [[ -z "$cert_path" ]] && [[ -x "${VENV_DIR}/bin/pip" ]]; then
+        "${VENV_DIR}/bin/pip" install certifi -q 2>/dev/null || true
+        cert_path=$("${VENV_DIR}/bin/python" -c "import certifi; print(certifi.where())" 2>/dev/null) || true
+    fi
+
+    if [[ -n "$cert_path" ]]; then
+        export SSL_CERT_FILE="$cert_path"
+        export REQUESTS_CA_BUNDLE="$cert_path"
+        export CURL_CA_BUNDLE="$cert_path"
+        info "SSL CA bundle: ${cert_path}"
+    fi
+}
+
 # ─── Ensure Poetry ────────────────────────────────────────────────────────────
 
 ensure_poetry() {
@@ -189,6 +217,20 @@ do_install() {
     step "3. Installing Python dependencies"
     # Ensure venv is created inside the project (.venv/)
     export POETRY_VIRTUALENVS_IN_PROJECT=true
+
+    # Pre-create venv and upgrade pip for proper manylinux wheel support
+    if [[ ! -d "$VENV_DIR" ]]; then
+        "${PYTHON3_CMD}" -m venv "$VENV_DIR"
+        ok "Created venv at ${VENV_DIR}"
+    fi
+    "${VENV_DIR}/bin/python" -m pip install --upgrade pip setuptools -q
+    ok "pip upgraded in venv"
+
+    # Fix SSL certificate issues on servers with outdated CA bundles
+    setup_ssl_certs
+
+    # Use pip-based installer for reliable wheel downloads on older servers
+    export POETRY_INSTALLER_MODERN_INSTALLATION=false
     poetry install
     ok "Dependencies installed"
 
@@ -265,6 +307,10 @@ do_start() {
         warn "Virtual environment not found at ${VENV_DIR}, setting up with Poetry..."
         ensure_poetry
         export POETRY_VIRTUALENVS_IN_PROJECT=true
+        "${PYTHON3_CMD}" -m venv "$VENV_DIR"
+        "${VENV_DIR}/bin/python" -m pip install --upgrade pip setuptools -q
+        setup_ssl_certs
+        export POETRY_INSTALLER_MODERN_INSTALLATION=false
         poetry install
         ok "Virtual environment created"
     fi
