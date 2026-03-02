@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -6,6 +7,8 @@ from typing import Any
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 def _resolve_runtime_env_path() -> str:
     """Resolve runtime env path from RUNTIME_ENV_PATH in .env file.
@@ -58,7 +61,7 @@ def get_config_value(key: str, default=None):
 def write_config_value(key: str, value: Any):
     path = _resolve_runtime_env_path()
     if path is None:
-        print(f"⚠️  WARNING: RUNTIME_ENV_PATH not set, config value '{key}' not persisted")
+        logger.warning("RUNTIME_ENV_PATH not set, config value '%s' not persisted", key)
         return
     _RUNTIME_ENV = _load_runtime_env()
     _RUNTIME_ENV[key] = value
@@ -66,7 +69,7 @@ def write_config_value(key: str, value: Any):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(_RUNTIME_ENV, f, ensure_ascii=False, indent=4)
     except Exception as e:
-        print(f"❌ Error writing config to {path}: {e}")
+        logger.error("Error writing config to %s: %s", path, e)
 
 
 def extract_conversation(conversation: dict, output_type: str):

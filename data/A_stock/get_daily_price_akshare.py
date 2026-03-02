@@ -41,7 +41,7 @@ def get_latest_date_from_csv(csv_path: Path) -> Optional[str]:
         latest_date = df["trade_date"].max()
         return latest_date
     except Exception as e:
-        logger.warning(f"读取 CSV 获取最新日期失败: {e}")
+        logger.warning("读取 CSV 获取最新日期失败: %s", e)
         return None
 
 
@@ -82,7 +82,7 @@ def get_latest_date_from_duckdb() -> Optional[str]:
                 return str(max_date).replace("-", "")
         return None
     except Exception as e:
-        logger.warning(f"从 DuckDB 获取股票最新日期失败: {e}")
+        logger.warning("从 DuckDB 获取股票最新日期失败: %s", e)
         return None
 
 
@@ -120,7 +120,7 @@ def get_latest_index_date_from_duckdb(index_code: str = "000016.SH") -> Optional
                 return str(max_date).replace("-", "")
         return None
     except Exception as e:
-        logger.warning(f"从 DuckDB 获取指数最新日期失败: {e}")
+        logger.warning("从 DuckDB 获取指数最新日期失败: %s", e)
         return None
 
 
@@ -182,11 +182,11 @@ def save_index_daily_to_duckdb(df: pd.DataFrame, index_code: str) -> bool:
             # 使用 insert_df 批量插入
             db.insert_df("index_daily_prices", df_insert)
 
-            logger.info(f"已保存 {len(df_insert)} 条指数日线数据到 DuckDB")
+            logger.info("已保存 %d 条指数日线数据到 DuckDB", len(df_insert))
             return True
 
     except Exception as e:
-        logger.error(f"保存指数日线数据到 DuckDB 失败: {e}")
+        logger.error("保存指数日线数据到 DuckDB 失败: %s", e)
         return False
 
 
@@ -262,35 +262,35 @@ def get_daily_price_a_stock(
     daily_end_date = datetime.now().strftime("%Y%m%d")
 
     if not need_update:
-        print(f"✅ 数据已是最新 (最新日期: {existing_latest})，无需更新")
+        logger.info("数据已是最新 (最新日期: %s)，无需更新", existing_latest)
         # 返回现有数据
         if daily_file.exists():
             return pd.read_csv(daily_file)
         return None
 
-    print(f"📊 增量更新: {start_date} - {daily_end_date} (现有最新: {existing_latest or '无'})")
+    logger.info("增量更新: %s - %s (现有最新: %s)", start_date, daily_end_date, existing_latest or "无")
 
     # 创建 AKShare 数据源
     source = create_data_source("akshare")
 
     try:
         # 1. 获取指数成分股
-        print(f"正在获取指数成分股数据: {index_code}")
+        logger.info("正在获取指数成分股数据: %s", index_code)
         df_cons = source.get_index_constituents(index_code)
 
         # 如果 API 返回空数据，尝试读取备用文件
         if df_cons.empty:
             if fallback_csv and Path(fallback_csv).exists():
-                print(f"API 返回空数据，使用备用文件: {fallback_csv}")
+                logger.info("API 返回空数据，使用备用文件: %s", fallback_csv)
                 df_cons = pd.read_csv(fallback_csv)
             else:
-                print(f"未获取到指数 {index_code} 的成分股数据")
+                logger.error("未获取到指数 %s 的成分股数据", index_code)
                 return None
 
         # 提取唯一的成分股代码
         code_list = df_cons["con_code"].unique().tolist()
         num_stocks = len(code_list)
-        print(f"共 {num_stocks} 只成分股")
+        logger.info("共 %d 只成分股", num_stocks)
 
         # 1.5 添加持仓中的股票（即使已从指数中剔除）
         try:
@@ -300,24 +300,24 @@ def get_daily_price_a_stock(
             # 找出持仓中但不在成分股中的股票
             extra_held = held_stocks - set(code_list)
             if extra_held:
-                print(f"📊 添加 {len(extra_held)} 只持仓股票（已从指数剔除）: {sorted(extra_held)}")
+                logger.info("添加 %d 只持仓股票（已从指数剔除）: %s", len(extra_held), sorted(extra_held))
                 code_list = list(set(code_list) | extra_held)
         except Exception as e:
-            logger.warning(f"获取持仓股票失败: {e}")
+            logger.warning("获取持仓股票失败: %s", e)
 
         # 2. 获取日线数据
-        print(f"正在获取日线数据: {start_date} - {daily_end_date}")
+        logger.info("正在获取日线数据: %s - %s", start_date, daily_end_date)
         df_new = source.get_stock_daily(code_list, start_date, daily_end_date)
 
         if df_new.empty:
-            print("未获取到新的日线数据")
+            logger.warning("未获取到新的日线数据")
             if daily_file.exists():
                 return pd.read_csv(daily_file)
             return None
 
         # 3. 合并数据
         if daily_file.exists() and not force_update:
-            print("合并现有数据与新数据...")
+            logger.info("合并现有数据与新数据...")
             df_existing = pd.read_csv(daily_file)
             # 确保 trade_date 格式一致
             df_existing["trade_date"] = df_existing["trade_date"].astype(str)
@@ -331,18 +331,18 @@ def get_daily_price_a_stock(
             )
             df_combined = df_combined.sort_values(["ts_code", "trade_date"])
             df_daily = df_combined
-            print(f"合并后记录数: {len(df_daily)} (新增: {len(df_new)})")
+            logger.info("合并后记录数: %d (新增: %d)", len(df_daily), len(df_new))
         else:
             df_daily = df_new
 
         # 4. 保存数据
         df_daily.to_csv(daily_file, index=False, encoding="utf-8")
-        print(f"✅ 数据已保存: {daily_file} (shape: {df_daily.shape})")
+        logger.info("数据已保存: %s (shape: %s)", daily_file, df_daily.shape)
 
         return df_daily
 
     except Exception as e:
-        print(f"获取数据失败: {e}")
+        logger.error("获取数据失败: %s", e)
         logger.exception("详细错误信息")
         return None
 
@@ -363,7 +363,7 @@ def convert_index_daily_to_json(
         JSON 格式的数据字典
     """
     if df.empty:
-        print("警告: DataFrame 为空")
+        logger.warning("DataFrame 为空")
         return {}
 
     # 按日期降序排列
@@ -404,7 +404,7 @@ def convert_index_daily_to_json(
         output_file.parent.mkdir(parents=True, exist_ok=True)
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(json_data, f, indent=4, ensure_ascii=False)
-        print(f"JSON 数据已保存: {output_file}")
+        logger.info("JSON 数据已保存: %s", output_file)
 
     return json_data
 
@@ -438,7 +438,7 @@ def get_latest_index_date_from_json(json_path: Path) -> Optional[str]:
         latest_date = max(dates)
         return latest_date.replace("-", "")
     except Exception as e:
-        logger.warning(f"读取 JSON 获取最新日期失败: {e}")
+        logger.warning("读取 JSON 获取最新日期失败: %s", e)
         return None
 
 
@@ -492,7 +492,7 @@ def get_index_daily_data(
         end_date = datetime.now().strftime("%Y%m%d")
 
     if not need_update:
-        print(f"✅ 指数数据已是最新 (最新日期: {existing_latest})，无需更新")
+        logger.info("指数数据已是最新 (最新日期: %s)，无需更新", existing_latest)
         # 返回现有数据（从 JSON 读取）
         if json_file.exists():
             try:
@@ -512,10 +512,10 @@ def get_index_daily_data(
                         })
                     return pd.DataFrame(records)
             except Exception as e:
-                logger.warning(f"读取现有 JSON 数据失败: {e}")
+                logger.warning("读取现有 JSON 数据失败: %s", e)
         return None
 
-    print(f"📊 指数增量更新: {actual_start_date} - {end_date} (现有最新: {existing_latest or '无'})")
+    logger.info("指数增量更新: %s - %s (现有最新: %s)", actual_start_date, end_date, existing_latest or "无")
 
     # 创建 AKShare 数据源
     source = create_data_source("akshare")
@@ -524,7 +524,7 @@ def get_index_daily_data(
         df_new = source.get_index_daily(index_code, actual_start_date, end_date)
 
         if df_new.empty:
-            print("未获取到新的指数日线数据")
+            logger.warning("未获取到新的指数日线数据")
             return None
 
         # 合并现有数据
@@ -553,21 +553,21 @@ def get_index_daily_data(
                     df_combined = pd.concat([df_existing, df_new], ignore_index=True)
                     df_combined = df_combined.drop_duplicates(subset=["trade_date"], keep="last")
                     df_combined = df_combined.sort_values("trade_date")
-                    print(f"合并后指数记录数: {len(df_combined)} (新增: {len(df_new)})")
+                    logger.info("合并后指数记录数: %d (新增: %d)", len(df_combined), len(df_new))
             except Exception as e:
-                logger.warning(f"合并现有数据失败: {e}")
+                logger.warning("合并现有数据失败: %s", e)
 
         # 保存为 JSON
         convert_index_daily_to_json(df_combined, symbol=index_code, output_file=json_file)
 
         # 保存到 DuckDB
         if save_index_daily_to_duckdb(df_new, index_code):
-            print(f"✅ 指数数据已保存到 DuckDB")
+            logger.info("指数数据已保存到 DuckDB")
 
         return df_combined
 
     except Exception as e:
-        print(f"获取指数日线数据失败: {e}")
+        logger.error("获取指数日线数据失败: %s", e)
         logger.exception("详细错误信息")
         return None
 
@@ -608,7 +608,7 @@ def update_weight_file(
             if "stock_name" in old_df.columns:
                 stock_name_map = dict(zip(old_df["con_code"], old_df["stock_name"]))
         except Exception as e:
-            logger.warning(f"读取现有权重文件失败: {e}")
+            logger.warning("读取现有权重文件失败: %s", e)
 
     # 添加股票名称
     df_cons["stock_name"] = df_cons["con_code"].apply(
@@ -627,7 +627,7 @@ def update_weight_file(
     df_cons = df_cons[[c for c in columns if c in df_cons.columns]]
 
     df_cons.to_csv(weight_file, index=False, encoding="utf-8")
-    print(f"✅ 成分股权重文件已更新: {weight_file} ({len(df_cons)} 只成分股)")
+    logger.info("成分股权重文件已更新: %s (%d 只成分股)", weight_file, len(df_cons))
     return True
 
 
@@ -649,7 +649,7 @@ def fetch_missing_stocks(
         获取到的新数据 DataFrame
     """
     if not missing_codes:
-        print("没有缺失的股票需要获取")
+        logger.info("没有缺失的股票需要获取")
         return pd.DataFrame()
 
     if output_dir is None:
@@ -660,14 +660,14 @@ def fetch_missing_stocks(
 
     daily_file = output_dir / "daily_prices_sse_50.csv"
 
-    print(f"📊 获取 {len(missing_codes)} 只缺失股票的数据: {missing_codes}")
-    print(f"   日期范围: {start_date} - {end_date}")
+    logger.info("获取 %d 只缺失股票的数据: %s", len(missing_codes), missing_codes)
+    logger.info("日期范围: %s - %s", start_date, end_date)
 
     source = create_data_source("akshare")
     df_new = source.get_stock_daily(missing_codes, start_date, end_date)
 
     if df_new.empty:
-        print("⚠️  未获取到缺失股票的数据")
+        logger.warning("未获取到缺失股票的数据")
         return df_new
 
     # 合并到现有数据
@@ -686,8 +686,8 @@ def fetch_missing_stocks(
         df_combined = df_new
 
     df_combined.to_csv(daily_file, index=False, encoding="utf-8")
-    print(f"✅ 已添加 {len(df_new)} 条记录到 {daily_file}")
-    print(f"   现有股票数: {df_combined['ts_code'].nunique()}")
+    logger.info("已添加 %d 条记录到 %s", len(df_new), daily_file)
+    logger.info("现有股票数: %d", df_combined["ts_code"].nunique())
 
     return df_new
 
@@ -715,40 +715,36 @@ def fix_missing_data(
     if output_dir is None:
         output_dir = Path(__file__).parent / "A_stock_data"
 
-    print("\n" + "=" * 50)
-    print("检测缺失数据...")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("检测缺失数据...")
+    logger.info("=" * 50)
 
     validator = DataValidator(output_dir)
     result = validator.validate(use_api=True, frequency=frequency)
 
     if result.error_message:
-        print(f"❌ 验证失败: {result.error_message}")
+        logger.error("验证失败: %s", result.error_message)
         return False
 
     if result.weight_file_outdated:
-        print("成分股权重文件需要更新，正在更新...")
+        logger.info("成分股权重文件需要更新，正在更新...")
         update_weight_file(output_dir=output_dir)
 
     # 收集所有缺失的股票（成分股 + 持仓股票）
     all_missing = list(set(result.missing_stocks + result.missing_held_stocks))
 
     if not all_missing:
-        print("✅ 没有缺失的股票数据")
+        logger.info("没有缺失的股票数据")
         return True
 
     # 分类显示
     if result.missing_stocks:
-        print(f"\n发现 {len(result.missing_stocks)} 只缺失成分股:")
-        for stock in result.missing_stocks:
-            print(f"  - {stock}")
+        logger.info("发现 %d 只缺失成分股: %s", len(result.missing_stocks), result.missing_stocks)
 
     if result.missing_held_stocks:
-        print(f"\n发现 {len(result.missing_held_stocks)} 只持仓缺失行情（已剔除但仍持有）:")
-        for stock in result.missing_held_stocks:
-            print(f"  - {stock}")
+        logger.info("发现 %d 只持仓缺失行情（已剔除但仍持有）: %s", len(result.missing_held_stocks), result.missing_held_stocks)
 
-    print(f"\n正在获取 {len(all_missing)} 只缺失股票数据...")
+    logger.info("正在获取 %d 只缺失股票数据...", len(all_missing))
     df_new = fetch_missing_stocks(
         all_missing,
         output_dir=output_dir,
@@ -756,10 +752,10 @@ def fix_missing_data(
     )
 
     if not df_new.empty:
-        print(f"✅ 成功获取 {len(all_missing)} 只股票的数据")
+        logger.info("成功获取 %d 只股票的数据", len(all_missing))
         return True
     else:
-        print("⚠️  部分股票数据获取失败")
+        logger.warning("部分股票数据获取失败")
         return False
 
 
@@ -779,15 +775,15 @@ if __name__ == "__main__":
 
     # 更新权重文件
     if args.update_weights:
-        print("=" * 50)
-        print("更新成分股权重文件...")
-        print("=" * 50)
+        logger.info("=" * 50)
+        logger.info("更新成分股权重文件...")
+        logger.info("=" * 50)
         update_weight_file(output_dir=output_dir)
 
     # 获取成分股日线数据
-    print("=" * 50)
-    print("使用 AKShare 获取 A 股数据")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("使用 AKShare 获取 A 股数据")
+    logger.info("=" * 50)
 
     df = get_daily_price_a_stock(
         index_code="000016.SH",
@@ -797,9 +793,9 @@ if __name__ == "__main__":
     )
 
     # 获取指数日线数据
-    print("\n" + "=" * 50)
-    print("获取指数日线数据...")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("获取指数日线数据...")
+    logger.info("=" * 50)
     df_index = get_index_daily_data(
         index_code="000016.SH",
         start_date=args.start_date,

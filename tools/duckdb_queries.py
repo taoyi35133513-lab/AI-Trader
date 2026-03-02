@@ -353,41 +353,22 @@ def query_latest_position(
 ) -> Tuple[Dict[str, float], int]:
     """Query latest position from database.
 
+    Uses a single SQL query that checks the given date first and falls back
+    to the most recent date before it, avoiding two separate DB round-trips.
+
     Args:
         db: DatabaseManager instance
         signature: Agent signature/name
-        max_date: Maximum date to query (exclusive)
+        max_date: Maximum date to query (inclusive for today, exclusive for history)
 
     Returns:
         Tuple of (positions dict, max action_id)
     """
-    # First try to find position on the given date
-    sql = """
-        SELECT ts_code, quantity, step_id, cash
-        FROM positions
-        WHERE agent_name = ? AND trade_date = ?
-        ORDER BY step_id DESC
-    """
-    df = db.query(sql, (signature, max_date))
-
-    if not df.empty:
-        max_id = int(df.iloc[0]["step_id"])
-        positions = {}
-        cash = None
-        for _, row in df.iterrows():
-            if row["ts_code"] and row["quantity"] and row["quantity"] > 0:
-                positions[row["ts_code"]] = float(row["quantity"])
-            if row["cash"] is not None:
-                cash = float(row["cash"])
-        if cash is not None:
-            positions["CASH"] = cash
-        return positions, max_id
-
-    # Fall back to finding the most recent position before max_date
+    # Single query: get all positions on max_date OR the most recent date <= max_date
     sql = """
         SELECT trade_date, ts_code, quantity, step_id, cash
         FROM positions
-        WHERE agent_name = ? AND trade_date < ?
+        WHERE agent_name = ? AND trade_date <= ?
         ORDER BY trade_date DESC, step_id DESC
     """
     df = db.query(sql, (signature, max_date))
@@ -395,7 +376,7 @@ def query_latest_position(
     if df.empty:
         return {}, -1
 
-    # Get all positions from the most recent date
+    # All rows with the latest trade_date belong to the current position
     latest_date = df.iloc[0]["trade_date"]
     max_id = int(df.iloc[0]["step_id"])
 
@@ -463,6 +444,9 @@ def insert_position_record(
 ) -> None:
     """Insert a position record into the database.
 
+    Uses batch INSERT (executemany) to write all stock positions in a single
+    database round-trip instead of one INSERT per symbol.
+
     Args:
         db: DatabaseManager instance
         signature: Agent signature/name
@@ -470,46 +454,45 @@ def insert_position_record(
         action: Action dictionary {action, symbol, amount}
         positions: Position dictionary {symbol: quantity, CASH: amount}
     """
-    # Get next step_id for this agent
+    # Get next step_id and next row id in a single query
     sql = """
-        SELECT COALESCE(MAX(step_id), -1) + 1 as next_step_id
-        FROM positions
-        WHERE agent_name = ?
+        SELECT
+            COALESCE((SELECT MAX(step_id) FROM positions WHERE agent_name = ?), -1) + 1 as next_step_id,
+            COALESCE((SELECT MAX(id) FROM positions), 0) + 1 as next_id
     """
     df = db.query(sql, (signature,))
     next_step_id = int(df.iloc[0]["next_step_id"])
-
-    # Get next row id (primary key)
-    sql = "SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM positions"
-    df = db.query(sql)
     next_row_id = int(df.iloc[0]["next_id"])
 
-    # Extract cash
+    # Extract cash and action fields
     cash = positions.get("CASH", 0.0)
+    action_type = action.get("action")
+    action_amount = action.get("amount", 0)
 
-    # Insert each stock position as a separate row
+    # Build batch params for all stock positions
     sql = """
         INSERT INTO positions
         (id, agent_name, market, trade_date, step_id, ts_code, quantity, cash, action, action_amount)
         VALUES (?, ?, 'cn', ?, ?, ?, ?, ?, ?, ?)
     """
 
-    has_positions = False
+    params_list = []
     for symbol, qty in positions.items():
         if symbol == "CASH":
             continue
-        has_positions = True
-        db.execute(sql, (
+        params_list.append((
             next_row_id, signature, date, next_step_id, symbol, qty, cash,
-            action.get("action"), action.get("amount", 0)
+            action_type, action_amount
         ))
         next_row_id += 1
 
-    # If no stock positions, insert a cash-only record
-    if not has_positions:
+    if params_list:
+        db.executemany(sql, params_list)
+    else:
+        # No stock positions — insert a cash-only record
         db.execute(sql, (
             next_row_id, signature, date, next_step_id, None, 0, cash,
-            action.get("action"), action.get("amount", 0)
+            action_type, action_amount
         ))
 
-    logger.info(f"DuckDB: Inserted position record for {signature} on {date} (step_id={next_step_id})")
+    logger.info(f"DuckDB: Inserted position record for {signature} on {date} (step_id={next_step_id}, rows={len(params_list) or 1})")

@@ -8,6 +8,7 @@ Live Trading Scheduler - 定时交易调度器
 
 import asyncio
 import json
+import logging
 import os
 import sys
 from datetime import datetime
@@ -20,6 +21,8 @@ from apscheduler.triggers.cron import CronTrigger
 # 添加项目根目录到 path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+logger = logging.getLogger(__name__)
 
 
 class LiveTradingScheduler:
@@ -86,11 +89,8 @@ class LiveTradingScheduler:
         else:
             self.tz = pytz.timezone("UTC")
 
-        print(f"[Scheduler] 初始化完成")
-        print(f"  - 配置文件: {self.config_path}")
-        print(f"  - 市场: {self.market}")
-        print(f"  - 频率: {self.frequency}")
-        print(f"  - 时区: {self.tz}")
+        logger.info("Scheduler初始化完成: 配置=%s, 市场=%s, 频率=%s, 时区=%s",
+                    self.config_path, self.market, self.frequency, self.tz)
 
     def _load_config(self) -> dict:
         """加载配置文件"""
@@ -107,10 +107,8 @@ class LiveTradingScheduler:
         elif self.frequency == "hourly":
             self._add_hourly_jobs()
 
-        print(f"\n[Scheduler] 启动定时任务")
-        print(f"  - 市场: {self.market}")
-        print(f"  - 频率: {self.frequency}")
-        print(f"  - 下次执行时间: {self._get_next_run_time()}")
+        logger.info("启动定时任务: 市场=%s, 频率=%s, 下次执行=%s",
+                    self.market, self.frequency, self._get_next_run_time())
 
         self.scheduler.start()
 
@@ -137,7 +135,7 @@ class LiveTradingScheduler:
             id="daily_trading",
             name="Daily Trading Session",
         )
-        print(f"[Scheduler] 已添加日频任务: 每个工作日 {hour:02d}:{minute:02d}")
+        logger.info("已添加日频任务: 每个工作日 %02d:%02d", hour, minute)
 
     def _add_hourly_jobs(self):
         """添加小时频任务"""
@@ -165,7 +163,7 @@ class LiveTradingScheduler:
             )
 
         times_str = ", ".join([f"{h:02d}:{m:02d}" for h, m in schedule_times])
-        print(f"[Scheduler] 已添加小时频任务: {times_str}")
+        logger.info("已添加小时频任务: %s", times_str)
 
     def _get_next_run_time(self) -> str:
         """获取下次执行时间"""
@@ -178,30 +176,25 @@ class LiveTradingScheduler:
     async def _run_trading_session(self):
         """执行交易会话"""
         now = datetime.now(self.tz)
-        print(f"\n{'=' * 60}")
-        print(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] 触发定时交易任务")
-        print(f"{'=' * 60}")
+        logger.info("触发定时交易任务 [%s]", now.strftime('%Y-%m-%d %H:%M:%S'))
 
         try:
             # 1. 获取并更新实时价格
-            print("\n[Step 1] 获取实时价格数据...")
+            logger.info("[Step 1] 获取实时价格数据...")
             from data.fetch_realtime import update_realtime_prices
 
             success = await update_realtime_prices(self.market, self.frequency)
             if not success:
-                print("[Warning] 实时价格获取失败，尝试继续执行...")
+                logger.warning("实时价格获取失败，尝试继续执行...")
 
             # 2. 执行交易会话
-            print("\n[Step 2] 执行交易会话...")
+            logger.info("[Step 2] 执行交易会话...")
             await self._execute_trading(now)
 
-            print(f"\n[完成] 交易会话执行完毕")
-            print(f"[下次执行] {self._get_next_run_time()}")
+            logger.info("交易会话执行完毕, 下次执行: %s", self._get_next_run_time())
 
         except Exception as e:
-            print(f"\n[ERROR] 交易执行失败: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error("交易执行失败: %s", e, exc_info=True)
 
     async def _execute_trading(self, current_time: datetime):
         """执行单次交易"""
@@ -231,7 +224,7 @@ class LiveTradingScheduler:
 
             today_date = current_time.strftime(f"%Y-%m-%d {aligned_time}")
 
-        print(f"[Trading] 交易时间点: {today_date}")
+        logger.info("交易时间点: %s", today_date)
 
         # 获取启用的模型
         enabled_models = [
@@ -239,22 +232,19 @@ class LiveTradingScheduler:
         ]
 
         if not enabled_models:
-            print("[Warning] 没有启用的模型")
+            logger.warning("没有启用的模型")
             return
 
         # 遍历启用的模型执行
         for model_config in enabled_models:
             model_name = model_config.get("name", "unknown")
-            print(f"\n[Trading] 执行模型: {model_name}")
-            print(f"[Trading] 时间: {today_date}")
+            logger.info("执行模型: %s, 时间: %s", model_name, today_date)
 
             try:
                 await self._run_single_model(model_config, today_date)
-                print(f"[Trading] 模型 {model_name} 执行完成")
+                logger.info("模型 %s 执行完成", model_name)
             except Exception as e:
-                print(f"[ERROR] 模型 {model_name} 执行失败: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.error("模型 %s 执行失败: %s", model_name, e, exc_info=True)
 
     async def _run_single_model(self, model_config: dict, today_date: str):
         """
@@ -335,22 +325,22 @@ class LiveTradingScheduler:
 
         # 输出结果摘要
         summary = agent.get_position_summary()
-        print(f"[Summary] 最新日期: {summary.get('latest_date')}")
-        print(f"[Summary] 现金余额: {summary.get('positions', {}).get('CASH', 0):,.2f}")
+        logger.info("Summary: 最新日期=%s, 现金余额=%s",
+                    summary.get('latest_date'), f"{summary.get('positions', {}).get('CASH', 0):,.2f}")
 
     def run_forever(self):
         """运行调度器（阻塞）"""
-        print("\n[Scheduler] 调度器运行中，按 Ctrl+C 停止...")
+        logger.info("调度器运行中，按 Ctrl+C 停止...")
         try:
             asyncio.get_event_loop().run_forever()
         except (KeyboardInterrupt, SystemExit):
-            print("\n[Scheduler] 收到停止信号，正在关闭...")
+            logger.info("收到停止信号，正在关闭...")
             self.scheduler.shutdown()
-            print("[Scheduler] 调度器已停止")
+            logger.info("调度器已停止")
 
     async def run_now(self):
         """立即执行一次（用于测试）"""
-        print("[Mode] 立即执行模式（不启动定时器）")
+        logger.info("立即执行模式（不启动定时器）")
         await self._run_trading_session()
 
 

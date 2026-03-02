@@ -184,6 +184,7 @@ INDEX_DEFINITIONS: Dict[str, list] = {
     "positions": [
         "CREATE INDEX IF NOT EXISTS idx_positions_agent ON positions(agent_name)",
         "CREATE INDEX IF NOT EXISTS idx_positions_date ON positions(trade_date)",
+        "CREATE INDEX IF NOT EXISTS idx_positions_agent_date_step ON positions(agent_name, trade_date, step_id)",
     ],
     "trade_logs": [
         "CREATE INDEX IF NOT EXISTS idx_logs_agent ON trade_logs(agent_name)",
@@ -326,7 +327,7 @@ def show_all_schemas():
     tables = conn.execute("SHOW TABLES").fetchall()
 
     for (table_name,) in tables:
-        print(f"\n=== {table_name} ===")
+        logger.info("=== %s ===", table_name)
         schema = get_table_schema(table_name)
         for col in schema:
-            print(f"  {col[0]}: {col[1]}")
+            logger.info("  %s: %s", col[0], col[1])

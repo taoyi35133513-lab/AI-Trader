@@ -1,6 +1,18 @@
 {
   "frequency": "daily",
   "market": "cn",
+  "agent_types": {
+    "BaseAgentAStock": {
+      "module": "agent.base_agent_astock.base_agent_astock",
+      "class": "BaseAgentAStock",
+      "frequency": "daily"
+    },
+    "BaseAgentAStock_Hour": {
+      "module": "agent.base_agent_astock.base_agent_astock_hour",
+      "class": "BaseAgentAStock_Hour",
+      "frequency": "hourly"
+    }
+  },
   "models": [
     {
       "name": "claude-3.7-sonnet",

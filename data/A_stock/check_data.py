@@ -1,11 +1,14 @@
 """检查持仓数据与价格数据的匹配情况"""
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def check_hourly_data():
     """检查小时线数据"""
-    print('=== 完整数据验证 (小时线) ===')
+    logger.info('=== 完整数据验证 (小时线) ===')
 
     # Load position data
     position_file = Path('../agent_data_astock_hour/gemini-2.5-flash-astock-hour/position/position.jsonl')
@@ -41,22 +44,21 @@ def check_hourly_data():
                     missing_data.append((pos_date, stock, f'date_mismatch, similar: {similar[:3]}'))
 
     if missing_data:
-        print(f'发现 {len(missing_data)} 条数据缺失/不匹配:')
+        logger.warning('发现 %d 条数据缺失/不匹配:', len(missing_data))
         for date, stock, reason in missing_data[:50]:
-            print(f'  {date} | {stock} | {reason}')
+            logger.warning('  %s | %s | %s', date, stock, reason)
     else:
-        print('所有持仓数据与价格数据匹配正常')
+        logger.info('所有持仓数据与价格数据匹配正常')
 
     # Show sample date formats
-    print('\n--- 日期格式示例 ---')
-    print(f'持仓日期格式: {list(positions_by_date.keys())[:3]}')
     sample_stock = list(stock_data.keys())[0]
-    print(f'价格日期格式 ({sample_stock}): {sorted(list(stock_data[sample_stock]))[:3]}')
+    logger.info('持仓日期格式: %s', list(positions_by_date.keys())[:3])
+    logger.info('价格日期格式 (%s): %s', sample_stock, sorted(list(stock_data[sample_stock]))[:3])
 
 
 def check_daily_data():
     """检查日线数据"""
-    print('\n=== 完整数据验证 (日线) ===')
+    logger.info('=== 完整数据验证 (日线) ===')
 
     # Load position data
     position_file = Path('../agent_data_astock/gemini-2.5-flash/position/position.jsonl')
@@ -92,13 +94,14 @@ def check_daily_data():
                     missing_data.append((pos_date, stock, f'date_mismatch, similar: {similar[:3]}'))
 
     if missing_data:
-        print(f'发现 {len(missing_data)} 条数据缺失/不匹配:')
+        logger.warning('发现 %d 条数据缺失/不匹配:', len(missing_data))
         for date, stock, reason in missing_data[:50]:
-            print(f'  {date} | {stock} | {reason}')
+            logger.warning('  %s | %s | %s', date, stock, reason)
     else:
-        print('所有持仓数据与价格数据匹配正常')
+        logger.info('所有持仓数据与价格数据匹配正常')
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     check_hourly_data()
     check_daily_data()

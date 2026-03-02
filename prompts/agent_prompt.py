@@ -1,3 +1,4 @@
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -9,6 +10,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # Add project root directory to Python path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -62,9 +65,7 @@ When you think your task is complete, output
 def get_agent_system_prompt(
     today_date: str, signature: str, market: str = "cn", stock_symbols: Optional[List[str]] = None
 ) -> str:
-    print(f"signature: {signature}")
-    print(f"today_date: {today_date}")
-    print(f"market: {market}")
+    logger.info("Building prompt: signature=%s, today_date=%s, market=%s", signature, today_date, market)
 
     # Auto-select stock symbols based on market if not provided (A-stock only)
     if stock_symbols is None:

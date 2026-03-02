@@ -4,6 +4,8 @@ Visualize trading metrics over time for all agents in both markets.
 Creates two figures (US and A-Stock), each with 4 horizontal subplots for CR, SR, Vol, MDD.
 """
 
+import logging
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,6 +13,8 @@ import seaborn as sns
 from pathlib import Path
 import json
 import argparse
+
+logger = logging.getLogger(__name__)
 
 # Set seaborn style for beautiful plots
 sns.set_theme(style="whitegrid", palette="husl")
@@ -234,7 +238,7 @@ def plot_single_metric(agent_data, baseline_data, market_name, metric_key, ylabe
 
     plt.tight_layout()
     plt.savefig(output_file, format='pdf', bbox_inches='tight')
-    print(f"✅ Saved: {output_file}")
+    logger.info("Saved: %s", output_file)
     plt.close()
 
 
@@ -302,7 +306,7 @@ def plot_market_metrics(agent_data, baseline_data, market_name, output_file, is_
 
     plt.tight_layout()
     plt.savefig(output_file, format='pdf', bbox_inches='tight')
-    print(f"✅ Saved: {output_file}")
+    logger.info("Saved: %s", output_file)
     plt.close()
 
 
@@ -322,9 +326,9 @@ def main():
 
     # Process US Market
     if not args.skip_us:
-        print("=" * 70)
-        print("PROCESSING U.S. MARKET VISUALIZATIONS")
-        print("=" * 70)
+        logger.info("=" * 70)
+        logger.info("PROCESSING U.S. MARKET VISUALIZATIONS")
+        logger.info("=" * 70)
 
         us_data_dir = Path('data/agent_data')
         agent_data = {}
@@ -338,16 +342,16 @@ def main():
             if agent_name not in AGENT_MAPPING:
                 continue
 
-            print(f"📊 Loading {agent_name}...")
+            logger.info("Loading %s...", agent_name)
             df = load_portfolio_data(agent_dir)
 
             if df is not None:
                 df = calculate_rolling_metrics(df, is_hourly=True)
                 agent_data[agent_name] = df
-                print(f"✅ {agent_name}: {len(df)} time points")
+                logger.info("%s: %d time points", agent_name, len(df))
 
         # Load baseline
-        print("📊 Loading QQQ baseline...")
+        logger.info("Loading QQQ baseline...")
         qqq_file = Path('data/daily_prices_QQQ.json')
         baseline_data = None
 
@@ -355,7 +359,7 @@ def main():
             date_range = get_agent_date_range(us_data_dir)
             baseline_data = load_baseline_data(qqq_file, is_hourly=True, date_range=date_range)
             if baseline_data is not None:
-                print(f"✅ QQQ Baseline: {len(baseline_data)} time points")
+                logger.info("QQQ Baseline: %d time points", len(baseline_data))
 
         # Create plot
         if agent_data:
@@ -369,9 +373,9 @@ def main():
 
     # Process A-Stock Market
     if not args.skip_astock:
-        print("\n" + "=" * 70)
-        print("PROCESSING A-SHARE MARKET VISUALIZATIONS")
-        print("=" * 70)
+        logger.info("=" * 70)
+        logger.info("PROCESSING A-SHARE MARKET VISUALIZATIONS")
+        logger.info("=" * 70)
 
         astock_data_dir = Path('data/agent_data_astock')
         agent_data = {}
@@ -385,16 +389,16 @@ def main():
             if agent_name not in AGENT_MAPPING:
                 continue
 
-            print(f"📊 Loading {agent_name}...")
+            logger.info("Loading %s...", agent_name)
             df = load_portfolio_data(agent_dir)
 
             if df is not None:
                 df = calculate_rolling_metrics(df, is_hourly=False)
                 agent_data[agent_name] = df
-                print(f"✅ {agent_name}: {len(df)} time points")
+                logger.info("%s: %d time points", agent_name, len(df))
 
         # Load baseline
-        print("📊 Loading SSE-50 baseline...")
+        logger.info("Loading SSE-50 baseline...")
         sse_file = Path('data/A_stock/index_daily_sse_50.json')
         baseline_data = None
 
@@ -405,7 +409,7 @@ def main():
                 date_range = ('2025-09-30', date_range[1])
             baseline_data = load_baseline_data(sse_file, is_hourly=False, date_range=date_range)
             if baseline_data is not None:
-                print(f"✅ SSE-50 Baseline: {len(baseline_data)} time points")
+                logger.info("SSE-50 Baseline: %d time points", len(baseline_data))
 
         # Create plot
         if agent_data:
@@ -419,9 +423,9 @@ def main():
 
     # Process Crypto Market
     if not args.skip_crypto:
-        print("\n" + "=" * 70)
-        print("PROCESSING CRYPTO MARKET VISUALIZATIONS")
-        print("=" * 70)
+        logger.info("=" * 70)
+        logger.info("PROCESSING CRYPTO MARKET VISUALIZATIONS")
+        logger.info("=" * 70)
 
         crypto_data_dir = Path('data/agent_data_crypto')
         agent_data = {}
@@ -435,16 +439,16 @@ def main():
             if agent_name not in AGENT_MAPPING:
                 continue
 
-            print(f"📊 Loading {agent_name}...")
+            logger.info("Loading %s...", agent_name)
             df = load_portfolio_data(agent_dir)
 
             if df is not None:
                 df = calculate_rolling_metrics(df, is_hourly=False)  # Daily trading for crypto
                 agent_data[agent_name] = df
-                print(f"✅ {agent_name}: {len(df)} time points")
+                logger.info("%s: %d time points", agent_name, len(df))
 
         # Load baseline (using crypto index if available)
-        print("📊 Loading Crypto baseline...")
+        logger.info("Loading Crypto baseline...")
         crypto_index_file = Path('data/crypto/CD5_crypto_index.json')
         baseline_data = None
 
@@ -452,7 +456,7 @@ def main():
             date_range = get_agent_date_range(crypto_data_dir)
             baseline_data = load_baseline_data(crypto_index_file, is_hourly=False, date_range=date_range)
             if baseline_data is not None:
-                print(f"✅ Crypto Index Baseline: {len(baseline_data)} time points")
+                logger.info("Crypto Index Baseline: %d time points", len(baseline_data))
 
         # Create plot
         if agent_data:
@@ -464,9 +468,9 @@ def main():
                 plot_market_metrics(agent_data, baseline_data, 'Crypto Market',
                                   output_file, is_hourly=False)
 
-    print("\n" + "=" * 70)
-    print(f"✅ All plots saved to: {output_dir}/")
-    print("=" * 70)
+    logger.info("=" * 70)
+    logger.info("All plots saved to: %s/", output_dir)
+    logger.info("=" * 70)
 
 
 if __name__ == '__main__':

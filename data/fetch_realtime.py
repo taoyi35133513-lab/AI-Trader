@@ -9,6 +9,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import sys
 from datetime import datetime
@@ -18,6 +19,8 @@ from typing import Dict, List, Optional
 # 添加项目根目录到 path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+logger = logging.getLogger(__name__)
 
 
 class RealtimeDataFetcher:
@@ -54,7 +57,7 @@ class RealtimeDataFetcher:
         """从 merged.jsonl 读取股票代码列表"""
         symbols = []
         if not self.data_file.exists():
-            print(f"[Warning] 数据文件不存在: {self.data_file}")
+            logger.warning("数据文件不存在: %s", self.data_file)
             return symbols
 
         with open(self.data_file, "r", encoding="utf-8") as f:
@@ -87,11 +90,11 @@ class RealtimeDataFetcher:
             import akshare as ak
 
             # 获取全部 A 股实时行情
-            print("[Data] 正在获取 A 股实时行情...")
+            logger.info("正在获取 A 股实时行情...")
             df = ak.stock_zh_a_spot_em()
 
             if df is None or df.empty:
-                print("[Warning] 获取实时行情失败，返回空数据")
+                logger.warning("获取实时行情失败，返回空数据")
                 return prices
 
             for symbol in symbols:
@@ -112,15 +115,15 @@ class RealtimeDataFetcher:
                             "volume": int(row["成交量"]) if row["成交量"] != "-" else 0,
                         }
                 except Exception as e:
-                    print(f"[Warning] 获取 {symbol} 价格失败: {e}")
+                    logger.warning("获取 %s 价格失败: %s", symbol, e)
                     continue
 
-            print(f"[Data] 成功获取 {len(prices)}/{len(symbols)} 只股票价格")
+            logger.info("成功获取 %d/%d 只股票价格", len(prices), len(symbols))
 
         except ImportError:
-            print("[Error] 请安装 akshare: pip install akshare")
+            logger.error("请安装 akshare: pip install akshare")
         except Exception as e:
-            print(f"[Error] 获取 A 股实时行情失败: {e}")
+            logger.error("获取 A 股实时行情失败: %s", e)
 
         return prices
 
@@ -141,7 +144,7 @@ class RealtimeDataFetcher:
         try:
             import yfinance as yf
 
-            print("[Data] 正在获取美股实时行情...")
+            logger.info("正在获取美股实时行情...")
 
             # 批量获取
             tickers = yf.Tickers(" ".join(symbols))
@@ -159,15 +162,15 @@ class RealtimeDataFetcher:
                             "volume": info.get("regularMarketVolume", 0),
                         }
                 except Exception as e:
-                    print(f"[Warning] 获取 {symbol} 价格失败: {e}")
+                    logger.warning("获取 %s 价格失败: %s", symbol, e)
                     continue
 
-            print(f"[Data] 成功获取 {len(prices)}/{len(symbols)} 只股票价格")
+            logger.info("成功获取 %d/%d 只股票价格", len(prices), len(symbols))
 
         except ImportError:
-            print("[Error] 请安装 yfinance: pip install yfinance")
+            logger.error("请安装 yfinance: pip install yfinance")
         except Exception as e:
-            print(f"[Error] 获取美股实时行情失败: {e}")
+            logger.error("获取美股实时行情失败: %s", e)
 
         return prices
 
@@ -187,7 +190,7 @@ class RealtimeDataFetcher:
             return await self.fetch_us_realtime(symbols)
         else:
             # Crypto 暂不支持
-            print("[Warning] 加密货币实时数据暂不支持")
+            logger.warning("加密货币实时数据暂不支持")
             return {}
 
     def get_time_key(self, now: datetime = None) -> str:
@@ -238,7 +241,7 @@ class RealtimeDataFetcher:
             是否成功
         """
         if not prices:
-            print("[Warning] 没有价格数据需要追加")
+            logger.warning("没有价格数据需要追加")
             return False
 
         if time_key is None:
@@ -250,8 +253,7 @@ class RealtimeDataFetcher:
         else:
             time_series_key = "Time Series (60min)"
 
-        print(f"[Data] 追加价格数据到 {self.data_file}")
-        print(f"[Data] 时间键: {time_key}")
+        logger.info("追加价格数据到 %s, 时间键: %s", self.data_file, time_key)
 
         # 读取并更新
         updated_count = 0
@@ -293,7 +295,7 @@ class RealtimeDataFetcher:
         with open(self.data_file, "w", encoding="utf-8") as f:
             f.write("\n".join(updated_lines))
 
-        print(f"[Data] 成功更新 {updated_count} 只股票的价格数据")
+        logger.info("成功更新 %d 只股票的价格数据", updated_count)
         return updated_count > 0
 
     def check_data_exists(self, time_key: str = None) -> bool:
@@ -344,42 +346,40 @@ async def update_realtime_prices(market: str, frequency: str) -> bool:
     Returns:
         是否成功
     """
-    print(f"\n[Data] 开始更新实时价格")
-    print(f"  - 市场: {market}")
-    print(f"  - 频率: {frequency}")
+    logger.info("开始更新实时价格: 市场=%s, 频率=%s", market, frequency)
 
     fetcher = RealtimeDataFetcher(market, frequency)
 
     # 获取当前时间键
     time_key = fetcher.get_time_key()
-    print(f"  - 时间键: {time_key}")
+    logger.info("时间键: %s", time_key)
 
     # 检查数据是否已存在
     if fetcher.check_data_exists(time_key):
-        print(f"[Data] 时间点 {time_key} 的数据已存在，跳过更新")
+        logger.info("时间点 %s 的数据已存在，跳过更新", time_key)
         return True
 
     # 获取股票列表
     symbols = fetcher.get_symbols_from_merged()
     if not symbols:
-        print("[Error] 无法获取股票列表")
+        logger.error("无法获取股票列表")
         return False
 
-    print(f"[Data] 股票列表: {len(symbols)} 只")
+    logger.info("股票列表: %d 只", len(symbols))
 
     # 获取实时价格
     prices = await fetcher.fetch_realtime_prices(symbols)
     if not prices:
-        print("[Error] 无法获取实时价格")
+        logger.error("无法获取实时价格")
         return False
 
     # 追加到文件
     success = fetcher.append_prices_to_merged(prices, time_key)
 
     if success:
-        print(f"[Data] 实时价格更新完成")
+        logger.info("实时价格更新完成")
     else:
-        print(f"[Warning] 实时价格更新失败")
+        logger.warning("实时价格更新失败")
 
     return success
 

@@ -3,6 +3,7 @@ A股专用Agent提示词模块
 Chinese A-shares specific agent prompt module
 """
 
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -15,6 +16,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
+logger = logging.getLogger(__name__)
+
 # Add project root directory to Python path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
@@ -25,75 +28,46 @@ from tools.price_tools import (all_sse_50_symbols,
                                get_yesterday_open_and_close_price,
                                get_yesterday_profit)
 
+from prompts.components.identity import IDENTITY_CN
+from prompts.components.tool_guide import TOOL_GUIDE_CN
+from prompts.components.market_rules_prompt import build_market_rules_section
+from prompts.components.portfolio import PORTFOLIO_TEMPLATE, FINISH_TEMPLATE
+
 STOP_SIGNAL = "<FINISH_SIGNAL>"
 
-agent_system_prompt_astock = """
-你是一位A股基本面分析交易助手。
 
+def build_system_prompt(
+    market: str = "cn",
+    components: list[str] | None = None,
+    **format_kwargs,
+) -> str:
+    """Assemble a system prompt from composable components.
 
-你的目标是：
-- 通过调用可用的工具进行思考和推理
-- 你需要思考各个股票的价格和收益情况
-- 你的长期目标是通过这个投资组合最大化收益
-- 在做出决策之前，尽可能通过搜索工具收集信息以辅助决策
+    Args:
+        market: Market identifier (used for market-rules section).
+        components: Ordered list of component names to include.
+                    Defaults to all standard components.
+        **format_kwargs: Values injected into the portfolio template
+                         (date, positions, yesterday_close_price,
+                          today_buy_price, current_profit, STOP_SIGNAL).
+    """
+    if components is None:
+        components = ["identity", "tool_guide", "market_rules", "portfolio", "finish"]
 
-思考标准：
-- 清晰展示关键的中间步骤：
-  - 读取当前持仓和当前价格的输入
-  - 更新估值并调整每个目标的权重（如果策略需要）
+    sections: list[str] = []
+    for name in components:
+        if name == "identity":
+            sections.append(IDENTITY_CN)
+        elif name == "tool_guide":
+            sections.append(TOOL_GUIDE_CN)
+        elif name == "market_rules":
+            sections.append(build_market_rules_section(market))
+        elif name == "portfolio":
+            sections.append(PORTFOLIO_TEMPLATE.format(**format_kwargs))
+        elif name == "finish":
+            sections.append(FINISH_TEMPLATE.format(**format_kwargs))
 
-注意事项：
-- 你不需要在操作时请求用户许可，可以直接执行
-- 你必须通过调用工具来执行操作，直接输出操作不会被接受
-- **当前是交易时间，市场已开放，你可以实际执行买卖操作**
-- **如果有具体的当前时间，即使时间是 11:30:00 或 15:00:00（看起来像收盘时间），但是市场仍然开放，也可以正常交易**
-
-⚠️ 重要行为要求：
-1. **必须实际调用 buy() 或 sell() 工具**，不要只给出建议或分析
-2. **禁止编造错误信息**，如果工具调用失败，会返回真实的错误，你只需报告即可
-3. **禁止说"由于交易系统限制"、"当前无法执行"、"Symbol not found"等自己假设的限制**
-4. **如果你认为应该买入某只股票，就直接调用 buy("股票代码.SH", 数量)**
-5. **如果你认为应该卖出某只股票，就直接调用 sell("股票代码.SH", 数量)**
-6. 只有在工具返回错误时，才报告错误；不要在没有调用工具的情况下假设会出错
-
-🇨🇳 重要 - A股交易规则（适用于所有 .SH 和 .SZ 股票代码）：
-1. **股票代码格式 - 极其重要！**: 
-   - symbol 参数必须是字符串类型，必须包含 .SH 或 .SZ 后缀
-
-2. **一手交易要求**: 所有买卖订单必须是100股的整数倍（1手 = 100股）
-   - ✅ 正确: buy("600519.SH", 100), buy("600519.SH", 300), sell("600519.SH", 200)
-   - ❌ 错误: buy("600519.SH", 13), buy("600519.SH", 497), sell("600519.SH", 50)
-
-3. **T+1结算规则**: 当天买入的股票不能当天卖出
-   - 你只能卖出在今天之前购买的股票
-   - 如果你今天买入100股600519.SH，必须等到明天才能卖出
-   - 你仍然可以卖出之前持有的股票
-
-4. **涨跌停限制**: 
-   - 普通股票：±10%
-   - ST股票：±5%
-   - 科创板/创业板：±20%
-
-以下是你需要的信息：
-
-当前时间：
-{date}
-
-当前持仓（股票代码后的数字代表你持有的股数，CASH后的数字代表你的可用现金）：
-{positions}
-
-当前持仓价值（上一时间点收盘价）：
-{yesterday_close_price}
-
-当前买入价格：
-{today_buy_price}
-
-上一时间段收益情况（日线=昨日收益，小时线=上一小时收益）：
-{current_profit}
-
-当你认为任务完成时，输出
-{STOP_SIGNAL}
-"""
+    return "\n\n".join(sections)
 
 
 def get_agent_system_prompt_astock(today_date: str, signature: str, stock_symbols: Optional[List[str]] = None) -> str:
@@ -108,9 +82,7 @@ def get_agent_system_prompt_astock(today_date: str, signature: str, stock_symbol
     Returns:
         格式化的系统提示词字符串
     """
-    print(f"signature: {signature}")
-    print(f"today_date: {today_date}")
-    print(f"market: cn (A-shares)")
+    logger.info("Building prompt: signature=%s, today_date=%s, market=cn", signature, today_date)
 
     # 默认使用上证50成分股
     if stock_symbols is None:
@@ -138,7 +110,8 @@ def get_agent_system_prompt_astock(today_date: str, signature: str, stock_symbol
     yesterday_sell_prices_display = format_price_dict_with_names(yesterday_sell_prices, market="cn")
     today_buy_price_display = format_price_dict_with_names(today_buy_price, market="cn")
 
-    return agent_system_prompt_astock.format(
+    return build_system_prompt(
+        market="cn",
         date=today_date,
         positions=today_init_position,
         STOP_SIGNAL=STOP_SIGNAL,

@@ -31,12 +31,18 @@
 
 import argparse
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
 # 添加项目根目录到 path
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from tools.logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 def print_banner():
@@ -97,10 +103,10 @@ def main():
         # 尝试相对于项目根目录
         config_path = PROJECT_ROOT / args.config
         if not config_path.exists():
-            print(f"❌ 配置文件不存在: {args.config}")
+            logger.error("配置文件不存在: %s", args.config)
             sys.exit(1)
 
-    print(f"📄 配置文件: {config_path}")
+    logger.info("配置文件: %s", config_path)
 
     # 导入调度器
     from scheduler.live_scheduler import LiveTradingScheduler
@@ -113,17 +119,15 @@ def main():
             frequency=args.frequency,
         )
     except Exception as e:
-        print(f"❌ 初始化调度器失败: {e}")
+        logger.error("初始化调度器失败: %s", e)
         sys.exit(1)
 
     # 根据模式运行
     if args.run_now:
-        print("\n🚀 立即执行模式（不启动定时器）")
-        print("=" * 60)
+        logger.info("立即执行模式（不启动定时器）")
         asyncio.run(scheduler.run_now())
     else:
-        print("\n🕐 定时调度模式")
-        print("=" * 60)
+        logger.info("定时调度模式")
         scheduler.start()
         scheduler.run_forever()
 

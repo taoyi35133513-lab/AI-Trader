@@ -16,6 +16,7 @@ Key features:
 
 import asyncio
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timedelta
@@ -30,6 +31,8 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.insert(0, project_root)
 
 from agent.base_agent_astock.base_agent_astock import BaseAgentAStock
+
+logger = logging.getLogger(__name__)
 from prompts.agent_prompt_astock import STOP_SIGNAL, get_agent_system_prompt_astock
 from tools.general_tools import (extract_conversation, extract_tool_messages,
                                  get_config_value, write_config_value)
@@ -138,7 +141,6 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
         Returns:
             List of trading dates/times within the range
         """
-        print()
         # Determine output format based on input format
         has_time1 = ' ' in init_date
         has_time2 = ' ' in end_date
@@ -242,8 +244,7 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
                     trading_times.append(ts_str)
 
             except Exception as e:
-                print(f"❌ Error processing timestamp: {ts_str}")
-                print(e)
+                logger.error("Error processing timestamp: %s: %s", ts_str, e)
                 continue
 
         # Sort and remove duplicates
@@ -251,7 +252,7 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
         if REGISTER:
             # Only skip the very first timestamp if it exactly equals init_date to avoid double-processing
             if trading_times and trading_times[0] == init_date:
-                print("REGISTER: init_date equals first timestamp; skipping first to avoid duplication")
+                logger.info("REGISTER: init_date equals first timestamp; skipping first to avoid duplication")
                 trading_times = trading_times[1:]
         return trading_times
 
@@ -376,7 +377,7 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
                    (afternoon_start <= time_in_minutes <= afternoon_end)
 
         except Exception as e:
-            print(f"⚠️  Error validating trading time '{timestamp}': {e}")
+            logger.warning("Error validating trading time '%s': %s", timestamp, e)
             return False
 
     def _check_daily_completeness(self, trading_times: List[str], date: str) -> Dict[str, Any]:
@@ -433,10 +434,8 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
 
         # Print warning if incomplete
         if not result["is_complete"]:
-            print(f"⚠️  警告: {date} 数据不完整")
-            print(f"   预期时间点: {len(expected_times)} 个 {sorted(expected_times)}")
-            print(f"   实际时间点: {len(found_times)} 个 {sorted(found_times)}")
-            print(f"   缺失时间点: {sorted(missing_times)}")
+            logger.warning("数据不完整 %s: 预期%d个时间点, 实际%d个, 缺失: %s",
+                          date, len(expected_times), len(found_times), sorted(missing_times))
 
         return result
 
@@ -510,37 +509,22 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
             "is_valid": len(invalid_times) == 0 and not has_duplicates
         }
 
-        # Print summary if verbose
+        # Log summary if verbose
         if verbose:
-            print("=" * 60)
-            print("交易时间验证结果")
-            print("=" * 60)
-            print(f"总时间点数: {result['total_times']}")
-            print(f"有效时间点: {result['valid_times']}")
-            print(f"无效时间点: {result['invalid_times']}")
-
-            if result['invalid_times'] > 0:
-                print(f"\n⚠️  无效时间点列表:")
-                for ts in result['invalid_list']:
-                    print(f"   - {ts}")
-
-            print(f"\n交易日数: {result['num_trading_days']}")
-            print(f"日期范围: {result['unique_dates'][0] if result['unique_dates'] else 'N/A'} 至 "
-                  f"{result['unique_dates'][-1] if result['unique_dates'] else 'N/A'}")
-
-            # Summary of daily completeness
             complete_days = sum(1 for check in daily_checks.values() if check['is_complete'])
             incomplete_days = len(daily_checks) - complete_days
+            date_range_start = result['unique_dates'][0] if result['unique_dates'] else 'N/A'
+            date_range_end = result['unique_dates'][-1] if result['unique_dates'] else 'N/A'
 
-            print(f"\n完整交易日: {complete_days}/{len(daily_checks)}")
-            if incomplete_days > 0:
-                print(f"不完整交易日: {incomplete_days}")
+            logger.info("交易时间验证: 总%d个时间点 (有效%d, 无效%d), %d个交易日 (%s ~ %s), 完整%d/%d, 验证%s",
+                        result['total_times'], result['valid_times'], result['invalid_times'],
+                        result['num_trading_days'], date_range_start, date_range_end,
+                        complete_days, len(daily_checks), "通过" if result['is_valid'] else "失败")
 
+            if result['invalid_times'] > 0:
+                logger.warning("无效时间点: %s", result['invalid_list'])
             if has_duplicates:
-                print("\n⚠️  检测到重复时间点")
-
-            print(f"\n总体验证: {'✅ 通过' if result['is_valid'] else '❌ 失败'}")
-            print("=" * 60)
+                logger.warning("检测到重复时间点")
 
         return result
 

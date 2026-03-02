@@ -10,11 +10,14 @@ Metrics:
 """
 
 import json
+import logging
 import numpy as np
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
 import argparse
+
+logger = logging.getLogger(__name__)
 
 
 def load_position_data(position_file):
@@ -138,7 +141,7 @@ def load_all_price_files(data_dir, is_crypto=False, is_astock=False):
                     price_data[usdt_symbol] = data
 
         except Exception as e:
-            print(f"Warning: Could not load {price_file}: {e}")
+            logger.warning("Could not load %s: %s", price_file, e)
 
     return price_data
 
@@ -170,7 +173,7 @@ def calculate_portfolio_values(positions, price_data, is_crypto=False, verbose=T
                 stock_value += amount * price
             else:
                 if verbose and (symbol, date) not in missing_prices:
-                    print(f"Warning: No price found for {symbol} on {date}")
+                    logger.warning("No price found for %s on %s", symbol, date)
                     missing_prices.add((symbol, date))
 
         total_value = cash + stock_value
@@ -186,7 +189,7 @@ def calculate_portfolio_values(positions, price_data, is_crypto=False, verbose=T
     df['date'] = pd.to_datetime(df['date'])
 
     if not verbose and missing_prices:
-        print(f"Warning: {len(missing_prices)} missing price entries (use --verbose to see details)")
+        logger.warning("%d missing price entries (use --verbose to see details)", len(missing_prices))
 
     return df
 
@@ -306,9 +309,9 @@ def main():
     args = parser.parse_args()
 
     # Load position data
-    print(f"Loading position data from {args.position_file}...")
+    logger.info("Loading position data from %s...", args.position_file)
     positions = load_position_data(args.position_file)
-    print(f"Loaded {len(positions)} position entries")
+    logger.info("Loaded %d position entries", len(positions))
 
     # Detect market type
     is_crypto = args.is_crypto or detect_market_type(positions) == 'crypto'
@@ -321,22 +324,21 @@ def main():
     else:
         market_type = 'stock'
 
-    print(f"Detected market type: {market_type}")
+    logger.info("Detected market type: %s", market_type)
 
     # Load price data
-    print(f"Loading price data from {args.data_dir}...")
+    logger.info("Loading price data from %s...", args.data_dir)
     price_data = load_all_price_files(args.data_dir, is_crypto, is_astock)
-    print(f"Loaded price data for {len(price_data)} symbols")
+    logger.info("Loaded price data for %d symbols", len(price_data))
 
     if len(price_data) == 0:
-        print("ERROR: No price data loaded! Check your --data-dir path.")
-        print(f"Looking in: {args.data_dir}")
+        logger.error("No price data loaded! Check your --data-dir path. Looking in: %s", args.data_dir)
         if is_astock:
-            print("For A-stock, try: --data-dir data/A_stock")
+            logger.info("For A-stock, try: --data-dir data/A_stock")
         return
 
     # Calculate portfolio values
-    print("Calculating portfolio values...")
+    logger.info("Calculating portfolio values...")
     portfolio_df = calculate_portfolio_values(positions, price_data, is_crypto, args.verbose)
 
     # Determine periods per year based on data frequency and market type
@@ -351,7 +353,7 @@ def main():
         periods_per_year = 252
 
     # Calculate metrics
-    print("Calculating metrics...")
+    logger.info("Calculating metrics...")
     metrics = calculate_metrics(portfolio_df, periods_per_year, args.risk_free_rate)
 
     # Print results
@@ -386,12 +388,12 @@ def main():
         output_metrics = {k: float(v) if isinstance(v, (np.integer, np.floating)) else v
                          for k, v in metrics.items()}
         json.dump(output_metrics, f, indent=2)
-    print(f"\nDetailed metrics saved to {output_file}")
+    logger.info("Detailed metrics saved to %s", output_file)
 
     # Save portfolio values
     portfolio_csv = Path(args.position_file).parent / 'portfolio_values.csv'
     portfolio_df.to_csv(portfolio_csv, index=False)
-    print(f"Portfolio values saved to {portfolio_csv}")
+    logger.info("Portfolio values saved to %s", portfolio_csv)
 
 
 if __name__ == '__main__':

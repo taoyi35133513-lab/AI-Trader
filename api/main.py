@@ -7,11 +7,19 @@ Unified backend server that hosts:
 - Agent control endpoints for starting/monitoring agents
 """
 
+import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from tools.logging_config import setup_logging
+
+setup_logging()
+
+logger = logging.getLogger(__name__)
 
 from api.config import settings, load_config_json
 from api.routers import agents, benchmarks, config, dashboard, prices, agent_control, live_trading, market_data, positions
@@ -38,10 +46,10 @@ async def lifespan(app: FastAPI):
             config_data = load_config_json("config.json")
             if config_data:
                 market = config_data.get("market", "cn")
-                print(f"[Live Mode] Auto-starting scheduler ({frequency}, {market})")
+                logger.info("[Live Mode] Auto-starting scheduler (%s, %s)", frequency, market)
                 await scheduler.start_scheduler(config_data, frequency, market)
             else:
-                print("[Live Mode] Warning: Failed to load config, scheduler not started")
+                logger.warning("[Live Mode] Failed to load config, scheduler not started")
 
         yield
 
@@ -69,6 +77,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global exception handler — returns consistent JSON error responses
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"error": str(exc), "path": str(request.url.path)},
+    )
+
 
 # 注册 REST API 路由
 app.include_router(agents.router, prefix="/api/agents", tags=["Agents"])
@@ -119,20 +137,36 @@ async def root():
 @app.get("/health")
 @app.get("/api/health")
 async def health_check():
-    """健康检查"""
+    """Health check with per-service MCP probing."""
+    import httpx
     from api.services.scheduler_service import get_scheduler_service
+
     scheduler = get_scheduler_service()
 
+    mcp_services = {
+        "mcp_math": "/mcp/math/mcp",
+        "mcp_trade": "/mcp/trade/mcp",
+        "mcp_search": "/mcp/search/mcp",
+        "mcp_price": "/mcp/price/mcp",
+    }
+
+    service_status: dict[str, str] = {"api": "ok"}
+
+    # Probe each MCP service with a lightweight GET
+    async with httpx.AsyncClient(base_url="http://127.0.0.1:8888", timeout=2.0) as client:
+        for name, path in mcp_services.items():
+            try:
+                resp = await client.get(path)
+                service_status[name] = "ok" if resp.status_code < 500 else f"error ({resp.status_code})"
+            except Exception as exc:
+                service_status[name] = f"unreachable ({type(exc).__name__})"
+
+    service_status["live_scheduler"] = "running" if scheduler.is_running else "stopped"
+
+    all_ok = all(v == "ok" for k, v in service_status.items() if k != "live_scheduler")
     return {
-        "status": "healthy",
-        "services": {
-            "api": "running",
-            "mcp_math": "running",
-            "mcp_trade": "running",
-            "mcp_search": "running",
-            "mcp_price": "running",
-            "live_scheduler": "running" if scheduler.is_running else "stopped",
-        }
+        "status": "healthy" if all_ok else "degraded",
+        "services": service_status,
     }
 
 

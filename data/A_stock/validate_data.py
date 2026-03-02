@@ -98,7 +98,7 @@ class DataValidator:
         held_stocks: Set[str] = set()
 
         if not position_dir.exists():
-            logger.debug(f"持仓目录不存在: {position_dir}")
+            logger.debug("持仓目录不存在: %s", position_dir)
             return held_stocks
 
         # 遍历所有 agent 目录
@@ -131,11 +131,11 @@ class DataValidator:
                             held_stocks.add(stock)
 
             except Exception as e:
-                logger.warning(f"读取持仓文件失败 {position_file}: {e}")
+                logger.warning("读取持仓文件失败 %s: %s", position_file, e)
                 continue
 
         if held_stocks:
-            logger.info(f"检测到 {len(held_stocks)} 只持仓股票: {sorted(held_stocks)}")
+            logger.info("检测到 %d 只持仓股票: %s", len(held_stocks), sorted(held_stocks))
 
         return held_stocks
 
@@ -162,7 +162,7 @@ class DataValidator:
             成分股代码集合
         """
         if not self.weight_file.exists():
-            logger.warning(f"权重文件不存在: {self.weight_file}")
+            logger.warning("权重文件不存在: %s", self.weight_file)
             return set()
 
         df = pd.read_csv(self.weight_file)
@@ -185,7 +185,7 @@ class DataValidator:
             code_col = "stock_code"
 
         if not price_file.exists():
-            logger.warning(f"价格文件不存在: {price_file}")
+            logger.warning("价格文件不存在: %s", price_file)
             return set()
 
         df = pd.read_csv(price_file)
@@ -289,7 +289,7 @@ class DataValidator:
                     if weight_file_outdated:
                         logger.info("成分股权重文件与 API 不一致，需要更新")
                 except Exception as e:
-                    logger.warning(f"API 获取失败，使用本地文件: {e}")
+                    logger.warning("API 获取失败，使用本地文件: %s", e)
                     current_constituents = self.get_index_constituents_from_file()
             else:
                 current_constituents = self.get_index_constituents_from_file()
@@ -368,61 +368,50 @@ def validate_and_report(
         check_freshness=check_freshness,
     )
 
-    print("\n" + "=" * 60)
-    print("A 股数据完整性验证报告")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("A 股数据完整性验证报告")
+    logger.info("=" * 60)
 
     if result.error_message:
-        print(f"错误: {result.error_message}")
+        logger.error("错误: %s", result.error_message)
         return result
 
     # 基本信息
     freq_label = "日线" if frequency == "daily" else "小时线"
-    print(f"数据类型: {freq_label}")
-    print(f"验证状态: {'✅ 通过' if result.is_valid else '❌ 未通过'}")
+    logger.info("数据类型: %s", freq_label)
+    logger.info("验证状态: %s", "通过" if result.is_valid else "未通过")
 
     if result.weight_file_outdated:
-        print("⚠️  成分股权重文件需要更新")
+        logger.warning("成分股权重文件需要更新")
 
     # 当前持仓
     if result.held_stocks:
-        print(f"\n📊 当前持仓股票 ({len(result.held_stocks)}):")
-        for stock in result.held_stocks:
-            print(f"    - {stock}")
+        logger.info("当前持仓股票 (%d): %s", len(result.held_stocks), result.held_stocks)
 
     # 缺失的成分股
     if result.missing_stocks:
-        print(f"\n❌ 缺失成分股 ({len(result.missing_stocks)}):")
-        for stock in result.missing_stocks:
-            print(f"    - {stock}")
+        logger.warning("缺失成分股 (%d): %s", len(result.missing_stocks), result.missing_stocks)
 
     # 持仓中缺失行情的股票
     if result.missing_held_stocks:
-        print(f"\n❌ 持仓缺失行情 (已剔除但仍持有，需更新数据) ({len(result.missing_held_stocks)}):")
-        for stock in result.missing_held_stocks:
-            print(f"    - {stock}")
+        logger.warning("持仓缺失行情 (已剔除但仍持有) (%d): %s", len(result.missing_held_stocks), result.missing_held_stocks)
 
     # 修复提示
     if result.missing_stocks or result.missing_held_stocks:
-        print("\n修复命令:")
-        print("    python get_daily_price_akshare.py --fix-missing")
+        logger.info("修复命令: python get_daily_price_akshare.py --fix-missing")
 
     # 多余股票（既不在成分股中也不在持仓中）
     if result.extra_stocks:
-        print(f"\nℹ️  多余股票 (可选清理，共 {len(result.extra_stocks)}):")
-        for stock in result.extra_stocks:
-            print(f"    - {stock}")
+        logger.info("多余股票 (可选清理，共 %d): %s", len(result.extra_stocks), result.extra_stocks)
 
     # 数据过时
     if result.stale_stocks:
-        print(f"\n⚠️  数据过时 ({len(result.stale_stocks)}):")
-        for stock in result.stale_stocks:
-            print(f"    - {stock}")
+        logger.warning("数据过时 (%d): %s", len(result.stale_stocks), result.stale_stocks)
 
     if result.is_valid:
-        print("\n✅ 所有需要的股票数据完整")
+        logger.info("所有需要的股票数据完整")
 
-    print("=" * 60)
+    logger.info("=" * 60)
     return result
 
 

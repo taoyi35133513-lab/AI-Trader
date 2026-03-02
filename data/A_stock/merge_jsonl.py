@@ -1,9 +1,12 @@
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def _check_data_completeness(csv_path: Path) -> None:
@@ -20,19 +23,16 @@ def _check_data_completeness(csv_path: Path) -> None:
         result = validator.validate(use_api=False)  # 不调用 API，使用本地文件
 
         if result.missing_stocks:
-            print("\n" + "=" * 60)
-            print(f"⚠️  警告: 发现 {len(result.missing_stocks)} 只股票数据缺失:")
-            for stock in result.missing_stocks:
-                print(f"    - {stock}")
-            print("\n修复命令:")
-            print("    python get_daily_price_akshare.py --fix-missing")
-            print("=" * 60 + "\n")
+            logger.warning(
+                "发现 %d 只股票数据缺失: %s。修复命令: python get_daily_price_akshare.py --fix-missing",
+                len(result.missing_stocks), result.missing_stocks
+            )
 
     except ImportError:
         # 验证模块不可用，跳过检查
         pass
     except Exception as e:
-        print(f"⚠️  数据完整性检查失败: {e}")
+        logger.warning("数据完整性检查失败: %s", e)
 
 
 def convert_a_stock_to_jsonl(
@@ -58,13 +58,13 @@ def convert_a_stock_to_jsonl(
     stock_name_csv = Path(stock_name_csv)
 
     if not csv_path.exists():
-        print(f"Error: CSV file not found: {csv_path}")
+        logger.error("CSV file not found: %s", csv_path)
         return
 
     # 在合并前检查数据完整性
     _check_data_completeness(csv_path)
 
-    print(f"Reading CSV file: {csv_path}")
+    logger.info("Reading CSV file: %s", csv_path)
 
     # Read CSV data
     df = pd.read_csv(csv_path)
@@ -72,16 +72,16 @@ def convert_a_stock_to_jsonl(
     # Read stock name mapping
     stock_name_map = {}
     if stock_name_csv.exists():
-        print(f"Reading stock names from: {stock_name_csv}")
+        logger.info("Reading stock names from: %s", stock_name_csv)
         name_df = pd.read_csv(stock_name_csv)
         # Create mapping from con_code (ts_code) to stock_name
         stock_name_map = dict(zip(name_df["con_code"], name_df["stock_name"]))
-        print(f"Loaded {len(stock_name_map)} stock names")
+        logger.info("Loaded %d stock names", len(stock_name_map))
     else:
-        print(f"Warning: Stock name file not found: {stock_name_csv}")
+        logger.warning("Stock name file not found: %s", stock_name_csv)
 
-    print(f"Total records: {len(df)}")
-    print(f"Columns: {df.columns.tolist()}")
+    logger.info("Total records: %d", len(df))
+    logger.info("Columns: %s", df.columns.tolist())
 
     # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,7 +89,7 @@ def convert_a_stock_to_jsonl(
     # Group by stock symbol
     grouped = df.groupby("ts_code")
 
-    print(f"Processing {len(grouped)} stocks...")
+    logger.info("Processing %d stocks...", len(grouped))
 
     # Track stocks already in CSV
     csv_symbols = set(df["ts_code"].unique())
@@ -148,7 +148,7 @@ def convert_a_stock_to_jsonl(
         # This handles SSE 50 composition changes - historical stocks may have
         # price data in individual JSON files but not in the current CSV
         json_dir = csv_path.parent
-        print(f"\nChecking for supplemental stock data in {json_dir}...")
+        logger.info("Checking for supplemental stock data in %s...", json_dir)
 
         for json_file in sorted(json_dir.glob("daily_prices_*.json")):
             # Skip index files
@@ -185,23 +185,19 @@ def convert_a_stock_to_jsonl(
                         json_data["Meta Data"]["2.1. Name"] = stock_name_map[symbol]
 
                 fout.write(json.dumps(json_data, ensure_ascii=False) + "\n")
-                print(f"  ✅ Supplemented: {symbol} from {json_file.name}")
+                logger.info("Supplemented: %s from %s", symbol, json_file.name)
                 supplemented_count += 1
 
             except Exception as e:
-                print(f"  ❌ Error reading {json_file}: {e}")
+                logger.error("Error reading %s: %s", json_file, e)
 
-    print(f"\n✅ Data conversion completed: {output_path}")
-    print(f"✅ Stocks from CSV: {len(grouped)}")
-    print(f"✅ Supplemented from JSON: {supplemented_count}")
-    print(f"✅ Total stocks: {len(grouped) + supplemented_count}")
-    print(f"✅ File size: {output_path.stat().st_size / 1024 / 1024:.2f} MB")
+    logger.info("Data conversion completed: %s", output_path)
+    logger.info("Stocks from CSV: %d, Supplemented from JSON: %d, Total: %d",
+                len(grouped), supplemented_count, len(grouped) + supplemented_count)
+    logger.info("File size: %.2f MB", output_path.stat().st_size / 1024 / 1024)
 
 
 if __name__ == "__main__":
-    # Convert A-share data to JSONL format
-    print("=" * 60)
-    print("A-Share Data Converter")
-    print("=" * 60)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    logger.info("A-Share Data Converter")
     convert_a_stock_to_jsonl()
-    print("=" * 60)

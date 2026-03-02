@@ -6,6 +6,7 @@ Encapsulates core functionality for A-shares trading including MCP tool manageme
 
 import asyncio
 import json
+import logging
 import os
 # Import project tools
 import sys
@@ -23,63 +24,9 @@ from langchain_openai import ChatOpenAI
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, project_root)
 
+from tools.llm_factory import create_llm
 
-class DeepSeekChatOpenAI(ChatOpenAI):
-    """
-    Custom ChatOpenAI wrapper for DeepSeek API compatibility.
-    Handles the case where DeepSeek returns tool_calls.args as JSON strings instead of dicts.
-    """
-
-    def _create_message_dicts(self, messages: list, stop: Optional[list] = None) -> list:
-        """Override to handle response parsing"""
-        message_dicts = super()._create_message_dicts(messages, stop)
-        return message_dicts
-
-    def _generate(self, messages: list, stop: Optional[list] = None, **kwargs):
-        """Override generation to fix tool_calls format in responses"""
-        # Call parent's generate method
-        result = super()._generate(messages, stop, **kwargs)
-
-        # Fix tool_calls format in the generated messages
-        for generation in result.generations:
-            for gen in generation:
-                if hasattr(gen, "message") and hasattr(gen.message, "additional_kwargs"):
-                    tool_calls = gen.message.additional_kwargs.get("tool_calls")
-                    if tool_calls:
-                        for tool_call in tool_calls:
-                            if "function" in tool_call and "arguments" in tool_call["function"]:
-                                args = tool_call["function"]["arguments"]
-                                # If arguments is a string, parse it
-                                if isinstance(args, str):
-                                    try:
-                                        tool_call["function"]["arguments"] = json.loads(args)
-                                    except json.JSONDecodeError:
-                                        pass  # Keep as string if parsing fails
-
-        return result
-
-    async def _agenerate(self, messages: list, stop: Optional[list] = None, **kwargs):
-        """Override async generation to fix tool_calls format in responses"""
-        # Call parent's async generate method
-        result = await super()._agenerate(messages, stop, **kwargs)
-
-        # Fix tool_calls format in the generated messages
-        for generation in result.generations:
-            for gen in generation:
-                if hasattr(gen, "message") and hasattr(gen.message, "additional_kwargs"):
-                    tool_calls = gen.message.additional_kwargs.get("tool_calls")
-                    if tool_calls:
-                        for tool_call in tool_calls:
-                            if "function" in tool_call and "arguments" in tool_call["function"]:
-                                args = tool_call["function"]["arguments"]
-                                # If arguments is a string, parse it
-                                if isinstance(args, str):
-                                    try:
-                                        tool_call["function"]["arguments"] = json.loads(args)
-                                    except json.JSONDecodeError:
-                                        pass  # Keep as string if parsing fails
-
-        return result
+logger = logging.getLogger(__name__)
 
 
 from prompts.agent_prompt_astock import (STOP_SIGNAL,
@@ -110,7 +57,7 @@ def _get_conversation_service():
             _db_conn = get_connection(read_only=False)
             _conversation_service = ConversationService(_db_conn)
         except Exception as e:
-            print(f"⚠️ Failed to initialize DuckDB conversation service: {e}")
+            logger.warning("Failed to initialize DuckDB conversation service: %s", e)
             return None
     return _conversation_service
 
@@ -331,7 +278,7 @@ class BaseAgentAStock:
 
     async def initialize(self) -> None:
         """Initialize MCP client and AI model"""
-        print(f"🚀 Initializing A-shares agent: {self.signature}")
+        logger.info("Initializing A-shares agent: %s", self.signature)
 
         # Validate OpenAI configuration
         if not self.openai_api_key:
@@ -339,7 +286,7 @@ class BaseAgentAStock:
                 "❌ OpenAI API key not set. Please configure OPENAI_API_KEY in environment or config file."
             )
         if not self.openai_base_url:
-            print("⚠️  OpenAI base URL not set, using default")
+            logger.warning("OpenAI base URL not set, using default")
 
         try:
             # Create MCP client
@@ -348,10 +295,9 @@ class BaseAgentAStock:
             # Get tools
             self.tools = await self.client.get_tools()
             if not self.tools:
-                print("⚠️  Warning: No MCP tools loaded. MCP services may not be running.")
-                print(f"   MCP configuration: {self.mcp_config}")
+                logger.warning("No MCP tools loaded. MCP services may not be running. Config: %s", self.mcp_config)
             else:
-                print(f"✅ Loaded {len(self.tools)} MCP tools")
+                logger.info("Loaded %d MCP tools", len(self.tools))
         except Exception as e:
             unified_mode = os.getenv("UNIFIED_MCP_MODE", "true").lower() == "true"
             if unified_mode:
@@ -370,31 +316,19 @@ class BaseAgentAStock:
                 )
 
         try:
-            # Create AI model - use custom DeepSeekChatOpenAI for DeepSeek models
-            # to handle tool_calls.args format differences (JSON string vs dict)
-            if "deepseek" in self.basemodel.lower():
-                self.model = DeepSeekChatOpenAI(
-                    model=self.basemodel,
-                    base_url=self.openai_base_url,
-                    api_key=self.openai_api_key,
-                    max_retries=3,
-                    timeout=30,
-                )
-            else:
-                self.model = ChatOpenAI(
-                    model=self.basemodel,
-                    base_url=self.openai_base_url,
-                    api_key=self.openai_api_key,
-                    max_retries=3,
-                    timeout=30,
-                )
+            # Create AI model via factory (auto-detects DeepSeek, etc.)
+            self.model = create_llm(
+                self.basemodel,
+                base_url=self.openai_base_url,
+                api_key=self.openai_api_key,
+            )
         except Exception as e:
             raise RuntimeError(f"❌ Failed to initialize AI model: {e}")
 
         # Note: agent will be created in run_trading_session() based on specific date
         # because system_prompt needs the current date and price information
 
-        print(f"✅ A-shares agent {self.signature} initialization completed")
+        logger.info("A-shares agent %s initialization completed", self.signature)
 
     def _setup_logging(self, today_date: str) -> str:
         """Set up log file path"""
@@ -439,7 +373,7 @@ class BaseAgentAStock:
                     base_timestamp=timestamp,
                 )
         except Exception as e:
-            print(f"⚠️ DuckDB log write failed: {e}")
+            logger.warning("DuckDB log write failed: %s", e)
 
         # Write to JSONL file (backup) - 保留以便迁移期间的向后兼容
         try:
@@ -447,7 +381,7 @@ class BaseAgentAStock:
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
         except Exception as e:
-            print(f"⚠️ JSONL log write failed: {e}")
+            logger.warning("JSONL log write failed: %s", e)
 
     async def _ainvoke_with_retry(self, message: List[Dict[str, str]]) -> Any:
         """Agent invocation with retry"""
@@ -457,8 +391,7 @@ class BaseAgentAStock:
             except Exception as e:
                 if attempt == self.max_retries:
                     raise e
-                print(f"⚠️ Attempt {attempt} failed, retrying after {self.base_delay * attempt} seconds...")
-                print(f"Error details: {e}")
+                logger.warning("Attempt %d failed, retrying after %.1f seconds... Error: %s", attempt, self.base_delay * attempt, e)
                 await asyncio.sleep(self.base_delay * attempt)
 
     async def run_trading_session(self, today_date: str) -> None:
@@ -567,14 +500,14 @@ class BaseAgentAStock:
         """Register new agent, create initial positions"""
         # Check if position.jsonl file already exists
         if os.path.exists(self.position_file):
-            print(f"⚠️ Position file {self.position_file} already exists, skipping registration")
+            logger.info("Position file %s already exists, skipping registration", self.position_file)
             return
 
         # Ensure directory structure exists
         position_dir = os.path.join(self.data_path, "position")
         if not os.path.exists(position_dir):
             os.makedirs(position_dir)
-            print(f"📁 Created position directory: {position_dir}")
+            logger.info("Created position directory: %s", position_dir)
 
         # Create initial positions
         init_position = {symbol: 0 for symbol in self.stock_symbols}
@@ -597,10 +530,8 @@ class BaseAgentAStock:
         with open(self.position_file, "w") as f:  # Use "w" mode to ensure creating new file
             f.write(json.dumps({"date": init_date_str, "id": 0, "positions": init_position}) + "\n")
 
-        print(f"✅ A-shares agent {self.signature} registration completed")
-        print(f"📁 Position file: {self.position_file}")
-        print(f"💰 Initial cash: ¥{self.initial_cash:,.2f}")
-        print(f"📊 Number of stocks: {len(self.stock_symbols)}")
+        logger.info("A-shares agent %s registered: position=%s, cash=%.2f, stocks=%d",
+                    self.signature, self.position_file, self.initial_cash, len(self.stock_symbols))
 
     def get_trading_dates(self, init_date: str, end_date: str) -> List[str]:
         """
@@ -659,18 +590,18 @@ class BaseAgentAStock:
         """Run method with retry"""
         for attempt in range(1, self.max_retries + 1):
             try:
-                print(f"🔄 Attempting to run {self.signature} - {today_date} (Attempt {attempt})")
+                logger.info("Attempting to run %s - %s (Attempt %d)", self.signature, today_date, attempt)
                 await self.run_trading_session(today_date)
-                print(f"✅ {self.signature} - {today_date} run successful")
+                logger.info("%s - %s run successful", self.signature, today_date)
                 return
             except Exception as e:
-                print(f"❌ Attempt {attempt} failed: {str(e)}")
+                logger.error("Attempt %d failed: %s", attempt, e)
                 if attempt == self.max_retries:
-                    print(f"💥 {self.signature} - {today_date} all retries failed")
+                    logger.error("%s - %s all retries failed", self.signature, today_date)
                     raise
                 else:
                     wait_time = self.base_delay * attempt
-                    print(f"⏳ Waiting {wait_time} seconds before retry...")
+                    logger.info("Waiting %.1f seconds before retry...", wait_time)
                     await asyncio.sleep(wait_time)
 
     async def run_date_range(self, init_date: str, end_date: str) -> None:

@@ -236,7 +236,7 @@ def get_stock_name_mapping(market: str = "us") -> Dict[str, str]:
                     continue
         return name_map
     except Exception as e:
-        print(f"⚠️  Error reading stock names: {e}")
+        logger.warning("Error reading stock names: %s", e)
         return {}
 
 

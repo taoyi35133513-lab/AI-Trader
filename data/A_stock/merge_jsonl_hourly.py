@@ -14,10 +14,13 @@ A股小时级数据转JSONL格式脚本
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Dict
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def convert_hourly_to_jsonl(
@@ -43,10 +46,10 @@ def convert_hourly_to_jsonl(
     stock_name_csv = Path(stock_name_csv)
 
     if not csv_path.exists():
-        print(f"❌ Error: CSV file not found: {csv_path}")
+        logger.error("CSV file not found: %s", csv_path)
         return
 
-    print(f"📖 Reading CSV file: {csv_path}")
+    logger.info("Reading CSV file: %s", csv_path)
 
     # Read CSV data
     df = pd.read_csv(csv_path)
@@ -54,16 +57,16 @@ def convert_hourly_to_jsonl(
     # Read stock name mapping
     stock_name_map = {}
     if stock_name_csv.exists():
-        print(f"📖 Reading stock names from: {stock_name_csv}")
+        logger.info("Reading stock names from: %s", stock_name_csv)
         name_df = pd.read_csv(stock_name_csv)
         # Create mapping from con_code (stock_code) to stock_name
         stock_name_map = dict(zip(name_df["con_code"], name_df["stock_name"]))
-        print(f"✅ Loaded {len(stock_name_map)} stock names")
+        logger.info("Loaded %d stock names", len(stock_name_map))
     else:
-        print(f"⚠️  Warning: Stock name file not found: {stock_name_csv}")
+        logger.warning("Stock name file not found: %s", stock_name_csv)
 
-    print(f"📊 Total records: {len(df)}")
-    print(f"📋 Columns: {df.columns.tolist()}")
+    logger.info("Total records: %d", len(df))
+    logger.info("Columns: %s", df.columns.tolist())
 
     # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,7 +74,7 @@ def convert_hourly_to_jsonl(
     # Group by stock symbol
     grouped = df.groupby("stock_code")
 
-    print(f"🔄 Processing {len(grouped)} stocks...")
+    logger.info("Processing %d stocks...", len(grouped))
 
     with open(output_path, "w", encoding="utf-8") as fout:
         for stock_code, group_df in grouped:
@@ -127,16 +130,12 @@ def convert_hourly_to_jsonl(
             # Write to JSONL file
             fout.write(json.dumps(json_obj, ensure_ascii=False) + "\n")
 
-    print(f"✅ Data conversion completed: {output_path}")
-    print(f"✅ Total stocks: {len(grouped)}")
-    print(f"✅ File size: {output_path.stat().st_size / 1024 / 1024:.2f} MB")
+    logger.info("Data conversion completed: %s", output_path)
+    logger.info("Total stocks: %d, File size: %.2f MB", len(grouped), output_path.stat().st_size / 1024 / 1024)
 
 
 if __name__ == "__main__":
-    # Convert A-share hourly data to JSONL format
-    print("=" * 60)
-    print("A-Share Hourly Data Converter")
-    print("=" * 60)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    logger.info("A-Share Hourly Data Converter")
     convert_hourly_to_jsonl()
-    print("=" * 60)
 

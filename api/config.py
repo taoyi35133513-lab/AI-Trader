@@ -3,11 +3,14 @@ API 配置管理
 """
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -63,5 +66,5 @@ def load_config_json(config_name: str = "config.json") -> dict:
     if config_path.exists():
         with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
-    print(f"Warning: Config file not found: {config_path}")
+    logger.warning("Config file not found: %s", config_path)
     return {}

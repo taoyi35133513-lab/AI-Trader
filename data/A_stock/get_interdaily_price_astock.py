@@ -63,7 +63,7 @@ class AStockIntradayDataFetcher:
         self.output_file = output_file
         self.output_path = self.data_dir / output_file
         
-        logger.info(f"初始化数据获取器: frequency={frequency}分钟, data_dir={self.data_dir}")
+        logger.info("初始化数据获取器: frequency=%s分钟, data_dir=%s", frequency, self.data_dir)
     
     def load_stock_list(self) -> List[str]:
         """从CSV文件加载股票代码列表
@@ -80,7 +80,7 @@ class AStockIntradayDataFetcher:
         if not self.stock_list_path.exists():
             raise FileNotFoundError(f"股票列表文件不存在: {self.stock_list_path}")
 
-        logger.info(f"从 {self.stock_list_path} 加载股票列表")
+        logger.info("从 %s 加载股票列表", self.stock_list_path)
         df = pd.read_csv(self.stock_list_path)
 
         # 从 con_code 列提取唯一的股票代码
@@ -96,16 +96,16 @@ class AStockIntradayDataFetcher:
             held_stocks = validator.get_all_held_stocks("hourly")
             extra_held = held_stocks - stock_set
             if extra_held:
-                logger.info(f"添加 {len(extra_held)} 只持仓股票（已从指数剔除）: {sorted(extra_held)}")
+                logger.info("添加 %d 只持仓股票（已从指数剔除）: %s", len(extra_held), sorted(extra_held))
                 stock_set = stock_set | extra_held
         except Exception as e:
-            logger.warning(f"获取持仓股票失败: {e}")
+            logger.warning("获取持仓股票失败: %s", e)
 
         # 去除 .SH 或 .SZ 后缀
         stock_list = [code.replace(".SH", "").replace(".SZ", "") for code in stock_set]
 
-        logger.info(f"成功加载 {len(stock_list)} 只股票")
-        logger.debug(f"股票列表: {stock_list[:5]}..." if len(stock_list) > 5 else f"股票列表: {stock_list}")
+        logger.info("成功加载 %d 只股票", len(stock_list))
+        logger.debug("股票列表: %s", stock_list[:5] if len(stock_list) > 5 else stock_list)
 
         return stock_list
     
@@ -127,7 +127,7 @@ class AStockIntradayDataFetcher:
         # 检查输出文件是否存在
         if self.output_path.exists():
             try:
-                logger.info(f"检测到已存在的数据文件: {self.output_path}")
+                logger.info("检测到已存在的数据文件: %s", self.output_path)
                 df_existing = pd.read_csv(self.output_path)
                 
                 if not df_existing.empty and 'trade_date' in df_existing.columns:
@@ -142,8 +142,8 @@ class AStockIntradayDataFetcher:
                     next_date = last_date + timedelta(days=1)
                     begin_date = next_date.strftime("%Y%m%d")
                     
-                    logger.info(f"已有数据的最后日期: {last_date.strftime('%Y-%m-%d')}")
-                    logger.info(f"将从 {begin_date} 开始增量更新")
+                    logger.info("已有数据的最后日期: %s", last_date.strftime('%Y-%m-%d'))
+                    logger.info("将从 %s 开始增量更新", begin_date)
                     
                     # 检查是否已经是最新数据
                     if begin_date > end_date:
@@ -156,10 +156,10 @@ class AStockIntradayDataFetcher:
                     return default_start_date, end_date
                     
             except Exception as e:
-                logger.warning(f"读取已有数据文件失败: {e}，使用默认开始日期")
+                logger.warning("读取已有数据文件失败: %s，使用默认开始日期", e)
                 return default_start_date, end_date
         else:
-            logger.info(f"未检测到已有数据文件，将从 {default_start_date} 开始获取")
+            logger.info("未检测到已有数据文件，将从 %s 开始获取", default_start_date)
             return default_start_date, end_date
     
     def fetch_intraday_data(
@@ -178,8 +178,8 @@ class AStockIntradayDataFetcher:
         Returns:
             包含所有股票数据的字典，key为股票代码，value为DataFrame
         """
-        logger.info(f"开始获取 {len(stock_list)} 只股票的盘中数据")
-        logger.info(f"时间范围: {begin_date} - {end_date}, 周期: {self.frequency}分钟")
+        logger.info("开始获取 %d 只股票的盘中数据", len(stock_list))
+        logger.info("时间范围: %s - %s, 周期: %d分钟", begin_date, end_date, self.frequency)
         
         try:
             df_dict = ef.stock.get_quote_history(
@@ -191,7 +191,7 @@ class AStockIntradayDataFetcher:
             logger.info("数据获取成功")
             return df_dict
         except Exception as e:
-            logger.error(f"数据获取失败: {e}")
+            logger.error("数据获取失败: %s", e)
             raise
     
     def process_and_save_data(
@@ -249,17 +249,17 @@ class AStockIntradayDataFetcher:
                     by=['trade_date', 'stock_code']
                 ).reset_index(drop=True)
                 
-                logger.info(f"合并后总记录数: {len(df_total)} (旧: {len(df_old)}, 新: {len(df_new)})")
+                logger.info("合并后总记录数: %d (旧: %d, 新: %d)", len(df_total), len(df_old), len(df_new))
             except Exception as e:
-                logger.warning(f"合并数据失败: {e}，将只保存新数据")
+                logger.warning("合并数据失败: %s，将只保存新数据", e)
                 df_total = df_new
         else:
             df_total = df_new
         
         # 保存到CSV
         df_total.to_csv(self.output_path, index=False, encoding='utf-8')
-        logger.info(f"数据已保存到: {self.output_path}")
-        logger.info(f"总共 {len(df_total)} 条记录")
+        logger.info("数据已保存到: %s", self.output_path)
+        logger.info("总共 %d 条记录", len(df_total))
         
         return df_total
     
@@ -305,7 +305,7 @@ class AStockIntradayDataFetcher:
                 is_incremental = False
             
             # 3. 获取盘中数据
-            logger.info(f"数据获取日期范围: {begin_date} - {end_date}")
+            logger.info("数据获取日期范围: %s - %s", begin_date, end_date)
             df_dict = self.fetch_intraday_data(stock_list, begin_date, end_date)
             
             # 4. 处理并保存数据
@@ -315,7 +315,7 @@ class AStockIntradayDataFetcher:
             return df_total
             
         except Exception as e:
-            logger.error(f"数据获取流程失败: {e}")
+            logger.error("数据获取流程失败: %s", e)
             raise
 
 
@@ -341,17 +341,11 @@ def main():
     
     # 显示数据概览
     if df is not None and not df.empty:
-        print("\n" + "="*50)
-        print("数据概览:")
-        print("="*50)
-        print(df.head(10))
-        print(f"\n数据形状: {df.shape}")
-        print(f"股票数量: {df['stock_code'].nunique()}")
-        print(f"日期范围: {df['trade_date'].min()} - {df['trade_date'].max()}")
+        logger.info("数据概览: shape=%s, 股票数量=%d, 日期范围=%s - %s",
+                     df.shape, df['stock_code'].nunique(),
+                     df['trade_date'].min(), df['trade_date'].max())
     else:
-        print("\n" + "="*50)
-        print("无新数据或数据获取失败")
-        print("="*50)
+        logger.warning("无新数据或数据获取失败")
 
 
 if __name__ == "__main__":

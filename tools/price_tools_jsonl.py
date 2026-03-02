@@ -3,13 +3,79 @@ JSONL fallback implementations for price and position data access.
 
 This module contains the original JSONL-based implementations extracted from
 price_tools.py for use as fallback when DuckDB is unavailable.
+
+Performance note: The in-memory cache (_JsonlCache) avoids re-parsing the
+entire JSONL file on every query.  The cache is keyed by file path and
+invalidated when the file's mtime changes.
 """
 
 import json
+import logging
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# In-memory JSONL cache
+# ---------------------------------------------------------------------------
+
+class _JsonlCache:
+    """Lazy, mtime-aware cache for parsed JSONL price files.
+
+    Structure per file:
+        {symbol: {date_or_timestamp: bar_dict, ...}, ...}
+    """
+
+    def __init__(self):
+        self._data: Dict[str, Dict[str, Dict[str, Any]]] = {}   # path -> {sym -> {date -> bar}}
+        self._mtime: Dict[str, float] = {}                       # path -> last mtime
+
+    def get(self, file_path: Path) -> Dict[str, Dict[str, Any]]:
+        """Return cached data for *file_path*, re-reading if stale."""
+        key = str(file_path)
+
+        if not file_path.exists():
+            return {}
+
+        current_mtime = file_path.stat().st_mtime
+        if key in self._data and self._mtime.get(key) == current_mtime:
+            return self._data[key]
+
+        # (Re)parse
+        logger.info("JSONL cache miss — parsing %s", file_path)
+        symbol_map: Dict[str, Dict[str, Any]] = {}
+
+        with file_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    doc = json.loads(line)
+                except Exception:
+                    continue
+                meta = doc.get("Meta Data", {}) if isinstance(doc, dict) else {}
+                sym = meta.get("2. Symbol")
+                if not sym:
+                    continue
+                # Find the time-series dict
+                series = None
+                for k, v in doc.items():
+                    if k.startswith("Time Series"):
+                        series = v
+                        break
+                if isinstance(series, dict):
+                    symbol_map[sym] = series
+
+        self._data[key] = symbol_map
+        self._mtime[key] = current_mtime
+        return symbol_map
+
+
+_cache = _JsonlCache()
 
 
 def _get_merged_file_path(market: str = "cn") -> Path:
@@ -36,44 +102,22 @@ def get_open_prices_jsonl(
     merged_path: Optional[str] = None,
     market: str = "cn"
 ) -> Dict[str, Optional[float]]:
-    """Read opening prices from JSONL file."""
-    wanted = set(symbols)
-    results: Dict[str, Optional[float]] = {}
-
+    """Read opening prices from JSONL file (cached)."""
     merged_file = _resolve_merged_file_path_for_date(today_date, market, merged_path)
+    symbol_map = _cache.get(merged_file)
 
-    if not merged_file.exists():
-        return results
-
-    with merged_file.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
+    results: Dict[str, Optional[float]] = {}
+    for sym in symbols:
+        series = symbol_map.get(sym)
+        if series is None:
+            continue
+        bar = series.get(today_date)
+        if isinstance(bar, dict):
+            open_val = bar.get("1. buy price")
             try:
-                doc = json.loads(line)
+                results[f"{sym}_price"] = float(open_val) if open_val is not None else None
             except Exception:
-                continue
-            meta = doc.get("Meta Data", {}) if isinstance(doc, dict) else {}
-            sym = meta.get("2. Symbol")
-            if sym not in wanted:
-                continue
-            # Find time series
-            series = None
-            for key, value in doc.items():
-                if key.startswith("Time Series"):
-                    series = value
-                    break
-            if not isinstance(series, dict):
-                continue
-            bar = series.get(today_date)
-
-            if isinstance(bar, dict):
-                open_val = bar.get("1. buy price")
-
-                try:
-                    results[f"{sym}_price"] = float(open_val) if open_val is not None else None
-                except Exception:
-                    results[f"{sym}_price"] = None
+                results[f"{sym}_price"] = None
 
     return results
 
@@ -81,63 +125,39 @@ def get_open_prices_jsonl(
 def get_ohlcv_jsonl(
     symbol: str, date: str, market: str = "cn"
 ) -> Dict[str, Any]:
-    """Read OHLCV data from JSONL file."""
+    """Read OHLCV data from JSONL file (cached)."""
     merged_file = _resolve_merged_file_path_for_date(date, market, None)
+    symbol_map = _cache.get(merged_file)
 
-    if not merged_file.exists():
-        return {
-            "error": f"Data file not found: {merged_file}",
-            "symbol": symbol,
-            "date": date
-        }
+    if not symbol_map:
+        return {"error": f"Data file not found or empty: {merged_file}", "symbol": symbol, "date": date}
 
-    with merged_file.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            doc = json.loads(line)
-            meta = doc.get("Meta Data", {})
-            if meta.get("2. Symbol") != symbol:
-                continue
+    series = symbol_map.get(symbol)
+    if series is None:
+        return {"error": f"No records found for stock {symbol}", "symbol": symbol, "date": date}
 
-            # Find appropriate time series
-            is_hourly = " " in date
-            series_key = "Time Series (60min)" if is_hourly else "Time Series (Daily)"
-            series = doc.get(series_key, {})
-            day = series.get(date)
-
-            if day is None:
-                sample_dates = sorted(series.keys(), reverse=True)[:5]
-                return {
-                    "error": f"Data not found for date {date}. Sample dates: {sample_dates}",
-                    "symbol": symbol,
-                    "date": date,
-                }
-
-            return {
-                "symbol": symbol,
-                "date": date,
-                "ohlcv": {
-                    "open": day.get("1. buy price"),
-                    "high": day.get("2. high"),
-                    "low": day.get("3. low"),
-                    "close": day.get("4. sell price"),
-                    "volume": day.get("5. volume"),
-                },
-            }
+    day = series.get(date)
+    if day is None:
+        sample_dates = sorted(series.keys(), reverse=True)[:5]
+        return {"error": f"Data not found for date {date}. Sample dates: {sample_dates}", "symbol": symbol, "date": date}
 
     return {
-        "error": f"No records found for stock {symbol}",
         "symbol": symbol,
-        "date": date
+        "date": date,
+        "ohlcv": {
+            "open": day.get("1. buy price"),
+            "high": day.get("2. high"),
+            "low": day.get("3. low"),
+            "close": day.get("4. sell price"),
+            "volume": day.get("5. volume"),
+        },
     }
 
 
 def get_yesterday_date_jsonl(
     today_date: str, merged_path: Optional[str] = None, market: str = "cn"
 ) -> str:
-    """Get previous trading day from JSONL file."""
-    # Parse input date/time
+    """Get previous trading day from JSONL file (cached)."""
     if ' ' in today_date:
         input_dt = datetime.strptime(today_date, "%Y-%m-%d %H:%M:%S")
         date_only = False
@@ -145,73 +165,47 @@ def get_yesterday_date_jsonl(
         input_dt = datetime.strptime(today_date, "%Y-%m-%d")
         date_only = True
 
-    # Get merged.jsonl file path
     merged_file = _resolve_merged_file_path_for_date(today_date, market, merged_path)
+    symbol_map = _cache.get(merged_file)
 
-    if not merged_file.exists():
-        # Fallback to simple date arithmetic
+    # Collect all timestamps across all symbols from cache
+    all_timestamps: set[str] = set()
+    for series in symbol_map.values():
+        all_timestamps.update(series.keys())
+
+    def _simple_fallback() -> str:
         if date_only:
-            yesterday_dt = input_dt - timedelta(days=1)
-            while yesterday_dt.weekday() >= 5:
-                yesterday_dt -= timedelta(days=1)
-            return yesterday_dt.strftime("%Y-%m-%d")
+            dt = input_dt - timedelta(days=1)
+            while dt.weekday() >= 5:
+                dt -= timedelta(days=1)
+            return dt.strftime("%Y-%m-%d")
         else:
-            yesterday_dt = input_dt - timedelta(hours=1)
-            return yesterday_dt.strftime("%Y-%m-%d %H:%M:%S")
-
-    # Read all timestamps from JSONL
-    all_timestamps = set()
-
-    with merged_file.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            try:
-                doc = json.loads(line)
-                for key, value in doc.items():
-                    if key.startswith("Time Series"):
-                        if isinstance(value, dict):
-                            all_timestamps.update(value.keys())
-                        break
-            except Exception:
-                continue
+            return (input_dt - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
 
     if not all_timestamps:
-        if date_only:
-            yesterday_dt = input_dt - timedelta(days=1)
-            while yesterday_dt.weekday() >= 5:
-                yesterday_dt -= timedelta(days=1)
-            return yesterday_dt.strftime("%Y-%m-%d")
-        else:
-            yesterday_dt = input_dt - timedelta(hours=1)
-            return yesterday_dt.strftime("%Y-%m-%d %H:%M:%S")
+        return _simple_fallback()
 
     # Find max timestamp < today_date
     previous_timestamp = None
-
+    fmt = "%Y-%m-%d" if date_only else "%Y-%m-%d %H:%M:%S"
     for ts_str in all_timestamps:
         try:
             ts_dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-            if ts_dt < input_dt:
-                if previous_timestamp is None or ts_dt > previous_timestamp:
-                    previous_timestamp = ts_dt
-        except Exception:
-            continue
+        except ValueError:
+            try:
+                ts_dt = datetime.strptime(ts_str, "%Y-%m-%d")
+            except ValueError:
+                continue
+        if ts_dt < input_dt:
+            if previous_timestamp is None or ts_dt > previous_timestamp:
+                previous_timestamp = ts_dt
 
     if previous_timestamp is None:
-        if date_only:
-            yesterday_dt = input_dt - timedelta(days=1)
-            while yesterday_dt.weekday() >= 5:
-                yesterday_dt -= timedelta(days=1)
-            return yesterday_dt.strftime("%Y-%m-%d")
-        else:
-            yesterday_dt = input_dt - timedelta(hours=1)
-            return yesterday_dt.strftime("%Y-%m-%d %H:%M:%SS")
+        return _simple_fallback()
 
     if date_only:
         return previous_timestamp.strftime("%Y-%m-%d")
-    else:
-        return previous_timestamp.strftime("%Y-%m-%d %H:%M:%S")
+    return previous_timestamp.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def get_yesterday_open_and_close_price_jsonl(
@@ -220,106 +214,63 @@ def get_yesterday_open_and_close_price_jsonl(
     merged_path: Optional[str] = None,
     market: str = "cn"
 ) -> Tuple[Dict[str, Optional[float]], Dict[str, Optional[float]]]:
-    """Read yesterday's open and close prices from JSONL."""
-    wanted = set(symbols)
+    """Read yesterday's open and close prices from JSONL (cached)."""
     buy_results: Dict[str, Optional[float]] = {}
     sell_results: Dict[str, Optional[float]] = {}
 
     merged_file = _resolve_merged_file_path_for_date(today_date, market, merged_path)
+    symbol_map = _cache.get(merged_file)
 
-    if not merged_file.exists():
+    if not symbol_map:
         return buy_results, sell_results
 
     yesterday_date = get_yesterday_date_jsonl(today_date, merged_path, market)
 
-    with merged_file.open("r", encoding="utf-8") as f:
-        for line in f:
-            if not line.strip():
-                continue
+    for sym in symbols:
+        series = symbol_map.get(sym)
+        if series is None:
+            continue
+        bar = series.get(yesterday_date)
+        if isinstance(bar, dict):
+            buy_val = bar.get("1. buy price")
+            sell_val = bar.get("4. sell price")
             try:
-                doc = json.loads(line)
+                buy_results[f"{sym}_price"] = float(buy_val) if buy_val is not None else None
+                sell_results[f"{sym}_price"] = float(sell_val) if sell_val is not None else None
             except Exception:
-                continue
-            meta = doc.get("Meta Data", {}) if isinstance(doc, dict) else {}
-            sym = meta.get("2. Symbol")
-            if sym not in wanted:
-                continue
-            # Find time series
-            series = None
-            for key, value in doc.items():
-                if key.startswith("Time Series"):
-                    series = value
-                    break
-            if not isinstance(series, dict):
-                continue
-
-            bar = series.get(yesterday_date)
-            if isinstance(bar, dict):
-                buy_val = bar.get("1. buy price")
-                sell_val = bar.get("4. sell price")
-
-                try:
-                    buy_price = float(buy_val) if buy_val is not None else None
-                    sell_price = float(sell_val) if sell_val is not None else None
-                    buy_results[f"{sym}_price"] = buy_price
-                    sell_results[f"{sym}_price"] = sell_price
-                except Exception:
-                    buy_results[f"{sym}_price"] = None
-                    sell_results[f"{sym}_price"] = None
-            else:
-                buy_results[f'{sym}_price'] = None
-                sell_results[f'{sym}_price'] = None
+                buy_results[f"{sym}_price"] = None
+                sell_results[f"{sym}_price"] = None
+        else:
+            buy_results[f"{sym}_price"] = None
+            sell_results[f"{sym}_price"] = None
 
     return buy_results, sell_results
 
 
 def is_trading_day_jsonl(date: str, market: str = "cn") -> bool:
-    """Check if date is a trading day from JSONL."""
+    """Check if date is a trading day from JSONL (cached)."""
     merged_file_path = _get_merged_file_path(market)
+    symbol_map = _cache.get(merged_file_path)
 
-    if not merged_file_path.exists():
-        return False
-
-    try:
-        with open(merged_file_path, "r", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    data = json.loads(line.strip())
-                    time_series = data.get("Time Series (Daily)", {})
-                    if date in time_series:
-                        return True
-                    for key, value in data.items():
-                        if key.startswith("Time Series") and isinstance(value, dict):
-                            for timestamp in value.keys():
-                                if timestamp.startswith(date):
-                                    return True
-                except json.JSONDecodeError:
-                    continue
-            return False
-    except Exception:
-        return False
+    for series in symbol_map.values():
+        if date in series:
+            return True
+        # Check prefix match for hourly timestamps
+        for ts in series:
+            if ts.startswith(date):
+                return True
+    return False
 
 
 def get_all_trading_days_jsonl(market: str = "cn") -> List[str]:
-    """Get all trading days from JSONL."""
+    """Get all trading days from JSONL (cached)."""
     merged_file_path = _get_merged_file_path(market)
+    symbol_map = _cache.get(merged_file_path)
 
-    if not merged_file_path.exists():
-        return []
-
-    trading_days = set()
-    try:
-        with open(merged_file_path, "r", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    data = json.loads(line.strip())
-                    time_series = data.get("Time Series (Daily)", {})
-                    trading_days.update(time_series.keys())
-                except json.JSONDecodeError:
-                    continue
-        return sorted(list(trading_days))
-    except Exception:
-        return []
+    trading_days: set[str] = set()
+    for series in symbol_map.values():
+        trading_days.update(series.keys())
+    return sorted(trading_days)
 
 
 # ==================== Position Functions ====================

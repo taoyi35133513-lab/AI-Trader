@@ -8,6 +8,7 @@ Integrates with AgentRunnerService for execution and handles price data updates.
 import asyncio
 import importlib
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -19,6 +20,8 @@ from typing import Any, Dict, List, Optional
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+
+logger = logging.getLogger(__name__)
 
 from api.services.trading_mode import (
     TradingMode,
@@ -123,7 +126,7 @@ class SchedulerService:
                 self._status.error_message = None
                 self._update_job_info()
 
-                print(f"[SchedulerService] Started for {market} market, {frequency} frequency")
+                logger.info("SchedulerService started for %s market, %s frequency", market, frequency)
 
             except Exception as e:
                 self._status.error_message = str(e)
@@ -155,7 +158,7 @@ class SchedulerService:
                 self._status.next_runs = []
                 self._status.error_message = None
 
-                print("[SchedulerService] Stopped")
+                logger.info("SchedulerService stopped")
 
             except Exception as e:
                 self._status.error_message = str(e)
@@ -206,7 +209,7 @@ class SchedulerService:
             name="Live Trading (Daily)",
             replace_existing=True,
         )
-        print(f"[SchedulerService] Added daily job: {hour:02d}:{minute:02d} (Mon-Fri)")
+        logger.info("SchedulerService added daily job: %02d:%02d (Mon-Fri)", hour, minute)
 
     def _add_hourly_jobs(self):
         """Add hourly trading jobs"""
@@ -226,7 +229,7 @@ class SchedulerService:
             )
 
         times_str = ", ".join([f"{h:02d}:{m:02d}" for h, m in self.ASTOCK_HOURLY_TIMES])
-        print(f"[SchedulerService] Added hourly jobs: {times_str} (Mon-Fri)")
+        logger.info("SchedulerService added hourly jobs: %s (Mon-Fri)", times_str)
 
     def _update_job_info(self):
         """Update job information in status"""
@@ -259,9 +262,9 @@ class SchedulerService:
         frequency = self._status.frequency or "daily"
         market = self._status.market
 
-        print(f"\n{'=' * 60}")
-        print(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] Live Trading Session Started")
-        print(f"{'=' * 60}")
+        logger.info("=" * 60)
+        logger.info("Live Trading Session Started at %s", now.strftime('%Y-%m-%d %H:%M:%S'))
+        logger.info("=" * 60)
 
         execution_result = {
             "started_at": now.isoformat(),
@@ -272,10 +275,10 @@ class SchedulerService:
 
         try:
             # Step 1: Update price data
-            print("\n[Step 1] Updating price data...")
+            logger.info("[Step 1] Updating price data...")
             price_update_success = await self._update_prices(market, frequency)
             if not price_update_success:
-                print("[Warning] Price update failed, continuing with existing data...")
+                logger.warning("Price update failed, continuing with existing data...")
 
             # Step 2: Get trading date/time
             if frequency == "daily":
@@ -295,50 +298,45 @@ class SchedulerService:
                     aligned_time = f"{hour:02d}:00:00"
                 today_date = now.strftime(f"%Y-%m-%d {aligned_time}")
 
-            print(f"[Step 2] Trading date/time: {today_date}")
+            logger.info("[Step 2] Trading date/time: %s", today_date)
 
             # Step 3: Execute trading for each enabled model
-            print("\n[Step 3] Executing trading sessions...")
+            logger.info("[Step 3] Executing trading sessions...")
             enabled_models = [
                 m for m in self._config.get("models", [])
                 if m.get("enabled", False)
             ]
 
             if not enabled_models:
-                print("[Warning] No enabled models found")
+                logger.warning("No enabled models found")
             else:
                 for model_config in enabled_models:
                     model_name = model_config.get("name", "unknown")
                     try:
-                        print(f"\n  [Model] {model_name}")
+                        logger.info("Executing model: %s", model_name)
                         await self._execute_single_model(model_config, today_date, frequency, market)
                         execution_result["models_executed"].append(model_name)
-                        print(f"  [Model] {model_name} - Completed")
+                        logger.info("Model %s - Completed", model_name)
                     except Exception as e:
                         error_msg = f"{model_name}: {str(e)}"
                         execution_result["errors"].append(error_msg)
-                        print(f"  [Model] {model_name} - Failed: {e}")
+                        logger.error("Model %s - Failed: %s", model_name, e)
 
             execution_result["completed_at"] = datetime.now(self._tz).isoformat()
             self._status.last_execution = execution_result
 
-            print(f"\n{'=' * 60}")
-            print(f"[Live Trading Session Completed]")
-            print(f"  Models: {len(execution_result['models_executed'])}")
-            print(f"  Errors: {len(execution_result['errors'])}")
+            logger.info("Live Trading Session Completed: Models=%d, Errors=%d",
+                        len(execution_result['models_executed']), len(execution_result['errors']))
             if self.is_running:
                 self._update_job_info()
                 if self._status.next_runs:
-                    print(f"  Next run: {self._status.next_runs[0]['next_run']}")
-            print(f"{'=' * 60}\n")
+                    logger.info("Next run: %s", self._status.next_runs[0]['next_run'])
 
         except Exception as e:
             execution_result["errors"].append(str(e))
             execution_result["completed_at"] = datetime.now(self._tz).isoformat()
             self._status.last_execution = execution_result
-            print(f"\n[ERROR] Trading session failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error("Trading session failed: %s", e, exc_info=True)
 
     async def _update_prices(self, market: str, frequency: str) -> bool:
         """
@@ -357,10 +355,10 @@ class SchedulerService:
             return await update_realtime_prices(market, frequency)
         except ImportError:
             # Fallback: Run data scripts directly
-            print("[Warning] fetch_realtime module not found, using script fallback")
+            logger.warning("fetch_realtime module not found, using script fallback")
             return await self._run_data_scripts(frequency)
         except Exception as e:
-            print(f"[Error] Price update failed: {e}")
+            logger.error("Price update failed: %s", e)
             return False
 
     async def _run_data_scripts(self, frequency: str) -> bool:
@@ -383,7 +381,7 @@ class SchedulerService:
             for script in scripts:
                 script_path = data_dir / script
                 if script_path.exists():
-                    print(f"  Running {script}...")
+                    logger.info("Running %s...", script)
                     result = subprocess.run(
                         [sys.executable, str(script_path)],
                         cwd=data_dir,
@@ -392,10 +390,10 @@ class SchedulerService:
                         timeout=300,
                     )
                     if result.returncode != 0:
-                        print(f"  [Warning] {script} returned non-zero: {result.stderr}")
+                        logger.warning("%s returned non-zero: %s", script, result.stderr)
             return True
         except Exception as e:
-            print(f"  [Error] Script execution failed: {e}")
+            logger.error("Script execution failed: %s", e)
             return False
 
     async def _execute_single_model(
@@ -475,7 +473,7 @@ class SchedulerService:
 
         # Get summary
         summary = agent.get_position_summary()
-        print(f"    Cash: {summary.get('positions', {}).get('CASH', 0):,.2f}")
+        logger.info("Cash: %s", f"{summary.get('positions', {}).get('CASH', 0):,.2f}")
 
 
 # Singleton instance

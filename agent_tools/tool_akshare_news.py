@@ -164,7 +164,7 @@ class AKShareNewsTool:
         Returns:
             新闻列表
         """
-        print(f"Searching AKShare news: query={query}, tickers={tickers}, topics={topics}")
+        logger.info("Searching AKShare news: query=%s, tickers=%s, topics=%s", query, tickers, topics)
 
         # 获取日期过滤配置
         today_date = get_config_value("TODAY_DATE")
@@ -175,7 +175,7 @@ class AKShareNewsTool:
                     filter_date = datetime.strptime(today_date, "%Y-%m-%d %H:%M:%S")
                 else:
                     filter_date = datetime.strptime(today_date, "%Y-%m-%d")
-                print(f"Date filter: news before {filter_date}")
+                logger.info("Date filter: news before %s", filter_date)
             except Exception as e:
                 logger.error(f"Failed to parse TODAY_DATE: {e}")
 
@@ -187,13 +187,13 @@ class AKShareNewsTool:
             for ticker in ticker_list[:5]:  # 限制最多 5 个 ticker
                 news = self.get_stock_news(ticker, limit=10)
                 all_news.extend(news)
-                print(f"Found {len(news)} articles for {ticker}")
+                logger.info("Found %d articles for %s", len(news), ticker)
 
         # 如果没有 tickers 或需要通用新闻，获取市场新闻
         if not tickers or topics:
             general_news = self.get_general_news(limit=10)
             all_news.extend(general_news)
-            print(f"Found {len(general_news)} general market articles")
+            logger.info("Found %d general market articles", len(general_news))
 
         # 日期过滤
         if filter_date:
@@ -203,7 +203,7 @@ class AKShareNewsTool:
                 if pub_time is None or pub_time <= filter_date:
                     filtered_news.append(news)
             all_news = filtered_news
-            print(f"After date filtering: {len(all_news)} articles")
+            logger.info("After date filtering: %d articles", len(all_news))
 
         # 去重（按标题）
         seen_titles = set()
@@ -214,7 +214,7 @@ class AKShareNewsTool:
                 seen_titles.add(title)
                 unique_news.append(news)
 
-        print(f"Total unique articles: {len(unique_news)}")
+        logger.info("Total unique articles: %d", len(unique_news))
         return unique_news[:20]  # 最多返回 20 条
 
 
@@ -327,6 +327,6 @@ def get_stock_news_detail(symbol: str) -> str:
 
 
 if __name__ == "__main__":
-    print("Running AKShare News Tool as search tool")
+    logger.info("Running AKShare News Tool as search tool")
     port = int(os.getenv("SEARCH_HTTP_PORT", "8001"))
     mcp.run(transport="streamable-http", port=port)

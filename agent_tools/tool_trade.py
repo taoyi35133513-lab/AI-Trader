@@ -13,6 +13,7 @@ sys.path.insert(0, project_root)
 import json
 
 from tools.general_tools import get_config_value, write_config_value
+from tools.market_rules import get_rules
 from tools.price_tools import (get_latest_position, get_open_prices,
                                get_yesterday_date,
                                get_yesterday_open_and_close_price,
@@ -203,14 +204,17 @@ def buy(symbol: str, amount: int) -> Dict[str, Any]:
             "date": today_date,
         }
 
-    # 🇨🇳 Chinese A-shares trading rule: Must trade in lots of 100 shares (一手 = 100股)
-    if market == "cn" and amount % 100 != 0:
+    # Lot-size validation (driven by market rules)
+    rules = get_rules(market)
+    if amount % rules.lot_size != 0:
+        lo = (amount // rules.lot_size) * rules.lot_size
+        hi = lo + rules.lot_size
         return {
-            "error": f"Chinese A-shares must be traded in multiples of 100 shares (1 lot = 100 shares). You tried to buy {amount} shares.",
+            "error": f"{market.upper()} market requires multiples of {rules.lot_size} shares. You tried to buy {amount} shares.",
             "symbol": symbol,
             "amount": amount,
             "date": today_date,
-            "suggestion": f"Please use {(amount // 100) * 100} or {((amount // 100) + 1) * 100} shares instead.",
+            "suggestion": f"Please use {lo} or {hi} shares instead.",
         }
 
     # Step 2: Get current latest position and operation ID
@@ -221,8 +225,7 @@ def buy(symbol: str, amount: int) -> Dict[str, Any]:
         try:
             current_position, current_action_id = get_latest_position(today_date, signature)
         except Exception as e:
-            print(e)
-            print(today_date, signature)
+            logger.error("Failed to load latest position: %s (date=%s, signature=%s)", e, today_date, signature)
             return {"error": f"Failed to load latest position: {e}", "symbol": symbol, "date": today_date}
     # Step 3: Get stock opening price for the day
     # Use get_open_prices function to get the opening price of specified stock for the day
@@ -330,7 +333,9 @@ def buy(symbol: str, amount: int) -> Dict[str, Any]:
 
 def _get_today_buy_amount(symbol: str, today_date: str, signature: str) -> int:
     """
-    Helper function to get the total amount bought today for T+1 restriction check
+    Helper function to get the total amount bought today for T+1 restriction check.
+
+    Queries DuckDB first (fast indexed lookup), falls back to JSONL file scan.
 
     Args:
         symbol: Stock symbol
@@ -340,6 +345,23 @@ def _get_today_buy_amount(symbol: str, today_date: str, signature: str) -> int:
     Returns:
         Total shares bought today
     """
+    # Try DuckDB first
+    try:
+        from data.database.connection import DatabaseManager
+
+        with DatabaseManager(read_only=True) as db:
+            sql = """
+                SELECT COALESCE(SUM(action_amount), 0) as total_bought
+                FROM positions
+                WHERE agent_name = ? AND trade_date = ? AND ts_code = ? AND action = 'buy'
+            """
+            df = db.query(sql, (signature, today_date, symbol))
+            if not df.empty:
+                return int(df.iloc[0]["total_bought"])
+    except Exception:
+        pass
+
+    # Fallback to JSONL scan
     log_path = get_config_value("LOG_PATH", "./data/agent_data")
     if log_path.startswith("./data/"):
         log_path = log_path[7:]  # Remove "./data/" prefix
@@ -430,14 +452,17 @@ def sell(symbol: str, amount: int) -> Dict[str, Any]:
             "date": today_date,
         }
 
-    # 🇨🇳 Chinese A-shares trading rule: Must trade in lots of 100 shares (一手 = 100股)
-    if market == "cn" and amount % 100 != 0:
+    # Lot-size validation (driven by market rules)
+    rules = get_rules(market)
+    if amount % rules.lot_size != 0:
+        lo = (amount // rules.lot_size) * rules.lot_size
+        hi = lo + rules.lot_size
         return {
-            "error": f"Chinese A-shares must be traded in multiples of 100 shares (1 lot = 100 shares). You tried to sell {amount} shares.",
+            "error": f"{market.upper()} market requires multiples of {rules.lot_size} shares. You tried to sell {amount} shares.",
             "symbol": symbol,
             "amount": amount,
             "date": today_date,
-            "suggestion": f"Please use {(amount // 100) * 100} or {((amount // 100) + 1) * 100} shares instead.",
+            "suggestion": f"Please use {lo} or {hi} shares instead.",
         }
 
     # Step 2: Get current latest position and operation ID
@@ -477,8 +502,8 @@ def sell(symbol: str, amount: int) -> Dict[str, Any]:
             "date": today_date,
         }
 
-    # 🇨🇳 Chinese A-shares T+1 trading rule: Cannot sell shares bought on the same day
-    if market == "cn":
+    # T+N settlement rule (e.g. T+1 for A-shares: cannot sell shares bought same day)
+    if rules.is_t_plus_n_restricted():
         bought_today = _get_today_buy_amount(symbol, today_date, signature)
         if bought_today > 0:
             # Calculate sellable quantity (total position - bought today)
