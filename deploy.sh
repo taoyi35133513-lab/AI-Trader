@@ -428,7 +428,16 @@ do_nginx() {
         # Disable default server if present
         if [[ -f /etc/nginx/conf.d/default.conf ]]; then
             sudo mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.bak
-            info "Disabled default Nginx server"
+            info "Disabled default Nginx server (conf.d/default.conf)"
+        fi
+        # CentOS nginx.conf embeds a default server{} block on port 80.
+        # Comment it out to avoid "conflicting server name" warning.
+        if grep -q 'listen.*80.*default_server' /etc/nginx/nginx.conf 2>/dev/null; then
+            info "Disabling embedded default server in nginx.conf..."
+            sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak
+            # Comment out the embedded server { ... } block
+            sudo sed -i '/^[[:space:]]*server {/,/^[[:space:]]*}/s/^/#/' /etc/nginx/nginx.conf
+            info "Backed up original to nginx.conf.bak"
         fi
     fi
 
@@ -440,8 +449,14 @@ do_nginx() {
         exit 1
     fi
 
-    sudo systemctl reload nginx 2>/dev/null || sudo nginx -s reload 2>/dev/null || true
-    ok "Nginx reloaded"
+    # Start or reload Nginx
+    if systemctl is-active nginx &>/dev/null; then
+        sudo systemctl reload nginx
+        ok "Nginx reloaded"
+    else
+        sudo systemctl start nginx 2>/dev/null || sudo nginx 2>/dev/null
+        ok "Nginx started"
+    fi
 
     echo ""
     info "Frontend:     http://<server-ip>/"
