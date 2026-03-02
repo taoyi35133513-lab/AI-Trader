@@ -4,9 +4,10 @@
 #
 # Usage:
 #   chmod +x deploy.sh
-#   ./deploy.sh              # Full deploy: install + start all services + verify
+#   ./deploy.sh              # Full deploy: install + start + nginx + verify
 #   ./deploy.sh --install    # Only install dependencies
-#   ./deploy.sh --start      # Only start services (skip install)
+#   ./deploy.sh --start      # Only start backend service
+#   ./deploy.sh --nginx      # Install and configure Nginx reverse proxy
 #   ./deploy.sh --verify     # Only verify running services
 #   ./deploy.sh --stop       # Stop all services
 #   ./deploy.sh --live       # Deploy in live trading mode
@@ -21,7 +22,7 @@ LOG_DIR="${PROJECT_DIR}/logs"
 PID_DIR="${PROJECT_DIR}/.pids"
 
 BACKEND_PORT=8888
-FRONTEND_PORT=8080
+NGINX_CONF="${PROJECT_DIR}/nginx/ai-trader.conf"
 
 PYTHON="${VENV_DIR}/bin/python"
 PIP="${VENV_DIR}/bin/pip"
@@ -52,12 +53,13 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --install)  ACTION="install";  shift ;;
         --start)    ACTION="start";    shift ;;
+        --nginx)    ACTION="nginx";    shift ;;
         --verify)   ACTION="verify";   shift ;;
         --stop)     ACTION="stop";     shift ;;
         --live)     MODE="live";       shift ;;
         -f|--freq)  FREQUENCY="$2";    shift 2 ;;
         -h|--help)
-            echo "Usage: $0 [--install|--start|--verify|--stop] [--live] [-f daily|hourly]"
+            echo "Usage: $0 [--install|--start|--nginx|--verify|--stop] [--live] [-f daily|hourly]"
             exit 0
             ;;
         *)
@@ -283,34 +285,74 @@ do_start() {
         exit 1
     fi
 
-    # ── Frontend ─────────────────────────────────────────────────────────────
-    step "Starting frontend (port ${FRONTEND_PORT})"
-
-    local docs_dir="${PROJECT_DIR}/docs"
-    if [[ ! -d "$docs_dir" ]]; then
-        warn "docs/ directory not found, skipping frontend"
-    else
-        nohup "$PYTHON" -m http.server "$FRONTEND_PORT" \
-            --directory "$docs_dir" \
-            > "${LOG_DIR}/frontend.log" 2>&1 &
-        save_pid "frontend" $!
-        info "Frontend PID: $!"
-
-        if ! wait_for_port "$FRONTEND_PORT" 10 "Frontend"; then
-            warn "Frontend failed to start. Check ${LOG_DIR}/frontend.log"
-        fi
-    fi
-
-    ok "All services started"
+    ok "Backend started"
     echo ""
     info "Backend API:  http://localhost:${BACKEND_PORT}"
     info "API Docs:     http://localhost:${BACKEND_PORT}/docs"
-    info "Frontend UI:  http://localhost:${FRONTEND_PORT}"
     info "Health Check: http://localhost:${BACKEND_PORT}/api/health"
+    info "Frontend:     Configure Nginx with '$0 --nginx' to serve at http://localhost/"
     echo ""
     info "Logs: ${LOG_DIR}/"
     info "PIDs: ${PID_DIR}/"
     info "Stop: $0 --stop"
+}
+
+# ─── Nginx ─────────────────────────────────────────────────────────────────────
+
+do_nginx() {
+    step "Configuring Nginx reverse proxy"
+
+    if ! command -v nginx &>/dev/null; then
+        info "Installing Nginx..."
+        if command -v apt-get &>/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq nginx
+        elif command -v yum &>/dev/null; then
+            sudo yum install -y nginx
+        else
+            err "Cannot auto-install Nginx. Please install manually and re-run."
+            exit 1
+        fi
+        ok "Nginx installed"
+    else
+        ok "Nginx already installed"
+    fi
+
+    if [[ ! -f "$NGINX_CONF" ]]; then
+        err "Nginx config template not found: ${NGINX_CONF}"
+        exit 1
+    fi
+
+    # Generate config with actual project path
+    local target="/etc/nginx/sites-available/ai-trader"
+    info "Writing Nginx config to ${target}"
+    sed "s|__PROJECT_DIR__|${PROJECT_DIR}|g" "$NGINX_CONF" | sudo tee "$target" > /dev/null
+
+    # Enable site
+    sudo mkdir -p /etc/nginx/sites-enabled
+    sudo ln -sf "$target" /etc/nginx/sites-enabled/ai-trader
+
+    # Remove default site if it exists
+    if [[ -f /etc/nginx/sites-enabled/default ]]; then
+        sudo rm -f /etc/nginx/sites-enabled/default
+        info "Removed default Nginx site"
+    fi
+
+    # Validate and reload
+    if sudo nginx -t 2>&1; then
+        ok "Nginx config syntax valid"
+    else
+        err "Nginx config syntax error — check ${target}"
+        exit 1
+    fi
+
+    sudo systemctl reload nginx 2>/dev/null || sudo nginx -s reload 2>/dev/null || true
+    ok "Nginx reloaded"
+
+    echo ""
+    info "Frontend:     http://<server-ip>/"
+    info "Backend API:  http://<server-ip>/api/"
+    info "API Docs:     http://<server-ip>/docs"
+    info "Health Check: http://<server-ip>/health"
 }
 
 # ─── Verify ────────────────────────────────────────────────────────────────────
@@ -333,11 +375,11 @@ do_verify() {
         ((fail++))
     fi
 
-    if is_running "frontend"; then
-        ok "Frontend process running (PID: $(read_pid frontend))"
+    if command -v nginx &>/dev/null && (systemctl is-active nginx &>/dev/null || pgrep nginx &>/dev/null); then
+        ok "Nginx is running"
         ((pass++))
     else
-        warn "Frontend process not running (optional)"
+        warn "Nginx not running (run: $0 --nginx)"
     fi
 
     # ── Port checks ──────────────────────────────────────────────────────────
@@ -353,12 +395,12 @@ do_verify() {
         ((fail++))
     fi
 
-    if ss -tlnp 2>/dev/null | grep -q ":${FRONTEND_PORT} " || \
-       netstat -tlnp 2>/dev/null | grep -q ":${FRONTEND_PORT} "; then
-        ok "Port ${FRONTEND_PORT} (frontend) is open"
+    if ss -tlnp 2>/dev/null | grep -q ":80 " || \
+       netstat -tlnp 2>/dev/null | grep -q ":80 "; then
+        ok "Port 80 (Nginx) is open"
         ((pass++))
     else
-        warn "Port ${FRONTEND_PORT} (frontend) is not open (optional)"
+        warn "Port 80 (Nginx) is not open (run: $0 --nginx)"
     fi
 
     # ── HTTP endpoint checks ─────────────────────────────────────────────────
@@ -390,10 +432,10 @@ do_verify() {
         ((fail++))
     fi
 
-    if http_check "http://localhost:${FRONTEND_PORT}/" "Frontend index.html"; then
+    if http_check "http://localhost/" "Nginx frontend (port 80)"; then
         ((pass++))
     else
-        warn "Frontend not reachable (optional)"
+        warn "Nginx frontend not reachable (run: $0 --nginx)"
     fi
 
     # ── MCP service checks ───────────────────────────────────────────────────
@@ -498,6 +540,9 @@ case "$ACTION" in
     start)
         do_start
         ;;
+    nginx)
+        do_nginx
+        ;;
     verify)
         do_verify
         ;;
@@ -507,6 +552,7 @@ case "$ACTION" in
     deploy)
         do_install
         do_start
+        do_nginx
         echo ""
         sleep 2
         do_verify

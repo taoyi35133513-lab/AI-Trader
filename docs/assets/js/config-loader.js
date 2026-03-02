@@ -11,7 +11,9 @@ class ConfigLoader {
     // Get API base URL from URL parameter or default
     _getApiBaseUrl() {
         const urlParams = new URLSearchParams(window.location.search);
-        return urlParams.get('api') || 'http://localhost:8888';
+        // With Nginx reverse proxy, use relative path (same origin).
+        // Override with ?api=http://host:port for direct backend access.
+        return urlParams.get('api') || '';
     }
 
     // Load configuration from API
