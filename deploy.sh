@@ -26,6 +26,7 @@ NGINX_CONF="${PROJECT_DIR}/nginx/ai-trader.conf"
 
 PYTHON="${VENV_DIR}/bin/python"
 UVICORN="${VENV_DIR}/bin/uvicorn"
+PYTHON3_CMD="python3"    # Updated by check_python() to the best available Python
 
 # Defaults
 FREQUENCY="daily"
@@ -71,18 +72,22 @@ done
 # ─── Helper Functions ──────────────────────────────────────────────────────────
 
 check_python() {
-    if command -v python3 &>/dev/null; then
-        local ver
-        ver=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-        local major minor
-        major=$(echo "$ver" | cut -d. -f1)
-        minor=$(echo "$ver" | cut -d. -f2)
-        if [[ "$major" -ge 3 && "$minor" -ge 10 ]]; then
-            ok "Python $ver found"
-            return 0
+    # Try python3 first, then versioned names (python3.13 down to python3.10)
+    local candidates=("python3" "python3.13" "python3.12" "python3.11" "python3.10")
+    for cmd in "${candidates[@]}"; do
+        if command -v "$cmd" &>/dev/null; then
+            local ver major minor
+            ver=$("$cmd" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null) || continue
+            major=$(echo "$ver" | cut -d. -f1)
+            minor=$(echo "$ver" | cut -d. -f2)
+            if [[ "$major" -ge 3 && "$minor" -ge 10 ]]; then
+                PYTHON3_CMD="$cmd"
+                ok "Python $ver found ($(command -v "$cmd"))"
+                return 0
+            fi
         fi
-    fi
-    err "Python 3.10+ is required"
+    done
+    err "Python 3.10+ is required. Tried: ${candidates[*]}"
     return 1
 }
 
@@ -157,7 +162,7 @@ ensure_poetry() {
         return 0
     fi
     info "Installing Poetry..."
-    python3 -m pip install --user poetry -q 2>/dev/null || pip3 install poetry -q
+    "${PYTHON3_CMD:-python3}" -m pip install --user poetry -q 2>/dev/null || pip3 install poetry -q
     if ! command -v poetry &>/dev/null; then
         err "Poetry installation failed. Install manually: https://python-poetry.org/docs/#installation"
         exit 1
