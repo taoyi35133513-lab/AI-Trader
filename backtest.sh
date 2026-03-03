@@ -150,6 +150,7 @@ import sys, asyncio
 sys.path.insert(0, '.')
 from main import (load_config, derive_signature, calculate_date_range,
                   derive_agent_type, derive_log_path, get_agent_class,
+                  resolve_env_var,
                   DEFAULT_MAX_STEPS, DEFAULT_MAX_RETRIES,
                   DEFAULT_BASE_DELAY, DEFAULT_INITIAL_CASH)
 from tools.general_tools import write_config_value
@@ -189,8 +190,8 @@ async def run_all():
             log_path=log_path, max_steps=DEFAULT_MAX_STEPS,
             max_retries=DEFAULT_MAX_RETRIES, base_delay=DEFAULT_BASE_DELAY,
             initial_cash=DEFAULT_INITIAL_CASH, init_date=init_date,
-            openai_base_url=model_config.get('openai_base_url'),
-            openai_api_key=model_config.get('openai_api_key'),
+            openai_base_url=resolve_env_var(model_config.get('openai_base_url')),
+            openai_api_key=resolve_env_var(model_config.get('openai_api_key')),
         )
         await agent.initialize()
         await agent.run_date_range(init_date, end_date)

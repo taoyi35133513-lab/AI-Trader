@@ -140,6 +140,17 @@ def derive_agent_type(frequency: str, config: Optional[dict] = None) -> str:
     return "BaseAgentAStock_Hour" if frequency == "hourly" else "BaseAgentAStock"
 
 
+def resolve_env_var(value: Optional[str]) -> Optional[str]:
+    """Resolve $ENV_VAR references in config values."""
+    if value and isinstance(value, str) and value.startswith("$"):
+        env_name = value[1:]
+        resolved = os.environ.get(env_name)
+        if resolved is None:
+            logger.warning("Environment variable %s not set", env_name)
+        return resolved
+    return value
+
+
 def derive_log_path(frequency: str) -> str:
     """Derive log path from frequency"""
     suffix = "_hour" if frequency == "hourly" else ""
@@ -375,8 +386,8 @@ async def main(config_path=None, frequency_override=None):
     for model_config in enabled_models:
         model_name = model_config.get("name", "unknown")
         basemodel = model_config.get("basemodel")
-        openai_base_url = model_config.get("openai_base_url", None)
-        openai_api_key = model_config.get("openai_api_key", None)
+        openai_base_url = resolve_env_var(model_config.get("openai_base_url", None))
+        openai_api_key = resolve_env_var(model_config.get("openai_api_key", None))
 
         if not basemodel:
             logger.warning("Model %s missing basemodel field", model_name)
