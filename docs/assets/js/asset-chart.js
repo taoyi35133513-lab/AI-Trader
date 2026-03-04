@@ -273,8 +273,8 @@ function createChart() {
         const data = allAgentsData[agentName];
         let color, borderWidth, borderDash;
 
-        // Special styling for benchmarks (check if name contains 'QQQ' or 'SSE')
-        const isBenchmark = agentName.includes('QQQ') || agentName.includes('SSE');
+        // Special styling for benchmarks
+        const isBenchmark = agentName.includes('QQQ') || agentName.includes('SSE') || agentName.includes('上证');
         if (isBenchmark) {
             color = dataLoader.getAgentBrandColor(agentName) || '#ff6b00';
             borderWidth = 2;
@@ -294,14 +294,6 @@ function createChart() {
                 x: date,
                 y: historyEntry ? historyEntry.value : null
             };
-        });
-
-        console.log(`Dataset ${index} (${agentName}):`, {
-            label: dataLoader.getAgentDisplayName(agentName),
-            dataPoints: chartData.filter(d => d.y !== null).length,
-            color: color,
-            isBenchmark: isBenchmark,
-            sampleData: chartData.slice(0, 3)
         });
 
         // Detect if we have hourly data (many data points with time component)
@@ -332,6 +324,13 @@ function createChart() {
         console.log(`[DATASET OBJECT ${index}] borderColor: ${datasetObj.borderColor}, pointHoverBackgroundColor: ${datasetObj.pointHoverBackgroundColor}`);
 
         return datasetObj;
+    });
+
+    // Sort datasets: benchmarks first (rendered underneath), then agents on top
+    datasets.sort((a, b) => {
+        const aIsBench = a.borderDash && a.borderDash.length > 0 ? 0 : 1;
+        const bIsBench = b.borderDash && b.borderDash.length > 0 ? 0 : 1;
+        return aIsBench - bIsBench;
     });
 
     // Create gradient for area fills
@@ -682,8 +681,8 @@ function createLegend() {
         const data = allAgentsData[agentName];
         let color, borderStyle;
 
-        // Special styling for benchmarks (check if name contains 'QQQ' or 'SSE')
-        const isBenchmark = agentName.includes('QQQ') || agentName.includes('SSE');
+        // Special styling for benchmarks
+        const isBenchmark = agentName.includes('QQQ') || agentName.includes('SSE') || agentName.includes('上证');
         if (isBenchmark) {
             color = dataLoader.getAgentBrandColor(agentName) || '#ff6b00';
             borderStyle = 'dashed';

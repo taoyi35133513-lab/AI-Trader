@@ -942,7 +942,8 @@ class DataLoader {
         return new Intl.NumberFormat(locale, {
             style: 'currency',
             currency: currency,
-            minimumFractionDigits: 2
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0
         }).format(value);
     }
 

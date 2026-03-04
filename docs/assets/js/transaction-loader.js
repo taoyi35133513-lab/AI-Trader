@@ -194,9 +194,11 @@ class TransactionLoader {
     // Format currency
     formatCurrency(value) {
         if (value === null || value === undefined) return 'N/A';
-        return new Intl.NumberFormat('en-US', {
+        const market = window.dataLoader?.getMarket() || 'us';
+        const isCN = market.startsWith('cn');
+        return new Intl.NumberFormat(isCN ? 'zh-CN' : 'en-US', {
             style: 'currency',
-            currency: 'USD',
+            currency: isCN ? 'CNY' : 'USD',
             minimumFractionDigits: 0,
             maximumFractionDigits: 0
         }).format(value);
