@@ -26,14 +26,31 @@ class DeepSeekChatOpenAI(ChatOpenAI):
     """
 
     def _generate(self, messages: list, stop: Optional[list] = None, **kwargs):
+        messages = _normalize_message_content(messages)
         result = super()._generate(messages, stop, **kwargs)
         _fix_tool_calls(result)
         return result
 
     async def _agenerate(self, messages: list, stop: Optional[list] = None, **kwargs):
+        messages = _normalize_message_content(messages)
         result = await super()._agenerate(messages, stop, **kwargs)
         _fix_tool_calls(result)
         return result
+
+
+def _normalize_message_content(messages: list) -> list:
+    """Convert list-type content to string for APIs that don't support it."""
+    for msg in messages:
+        content = getattr(msg, "content", None)
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, dict) and "text" in block:
+                    parts.append(block["text"])
+            msg.content = "\n".join(parts) if parts else ""
+    return messages
 
 
 def _fix_tool_calls(result) -> None:

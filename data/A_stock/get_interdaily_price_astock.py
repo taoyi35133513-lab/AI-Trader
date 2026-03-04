@@ -215,15 +215,25 @@ class AStockIntradayDataFetcher:
         
         df_new = pd.DataFrame()
         
-        # 遍历每只股票的数据
+        # 遍历每只股票的数据（跳过空 DataFrame）
         for stock_code, df_one in df_dict.items():
-            df_new = pd.concat([df_new, df_one], ignore_index=True)
-        
+            if df_one is not None and not df_one.empty:
+                df_new = pd.concat([df_new, df_one], ignore_index=True)
+
+        if df_new.empty:
+            logger.warning("所有股票数据为空，跳过处理")
+            return df_new
+
         # 重置索引
         df_new.reset_index(drop=True, inplace=True)
-        
+
         # 选择并重命名列
-        df_new = df_new[['股票名称', '股票代码', '日期', '开盘', '收盘', '最高', '最低', '成交量']]
+        expected_cols = ['股票名称', '股票代码', '日期', '开盘', '收盘', '最高', '最低', '成交量']
+        missing = [c for c in expected_cols if c not in df_new.columns]
+        if missing:
+            logger.error("数据缺少必要列: %s, 实际列: %s", missing, list(df_new.columns))
+            return pd.DataFrame()
+        df_new = df_new[expected_cols]
         df_new.columns = ['stock_name', 'stock_code', 'trade_date', 'open', 'close', 'high', 'low', 'volume']
         
         # 统一股票代码格式（添加.SH后缀）

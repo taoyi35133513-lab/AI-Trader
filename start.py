@@ -263,9 +263,21 @@ def start_unified_backend(background: bool = True, debug: bool = False):
             log(f"API Docs: http://localhost:8888/docs", "info")
             log(f"Log file: {log_dir / 'backend.log'}", "info")
 
-            # Wait for backend to be ready
+            # Wait for backend to be ready with health check
             log("Waiting for backend to initialize...", "info")
-            time.sleep(3)
+            import urllib.request
+            max_wait = 30
+            for i in range(max_wait):
+                time.sleep(1)
+                try:
+                    urllib.request.urlopen("http://localhost:8888/docs", timeout=2)
+                    log("Backend is ready", "success")
+                    break
+                except Exception:
+                    if i == max_wait - 1:
+                        log("Backend failed to start within timeout", "error")
+                        process.kill()
+                        return None
 
             return process
         else:

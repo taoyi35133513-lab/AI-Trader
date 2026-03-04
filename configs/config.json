@@ -22,7 +22,7 @@
     {
       "name": "deepseek-chat-v3.2",
       "basemodel": "deepseek-chat",
-      "enabled": false,
+      "enabled": true,
       "openai_base_url": "$DEEPSEEK_API_BASE",
       "openai_api_key": "$DEEPSEEK_API_KEY"
     },
@@ -34,7 +34,7 @@
     {
       "name": "gemini-2.5-flash",
       "basemodel": "gemini-2.5-flash",
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "gpt-5",
@@ -54,7 +54,7 @@
     {
       "name": "glm-4.7-flash",
       "basemodel": "glm-4.7-flash",
-      "enabled": true,
+      "enabled": false,
       "openai_base_url": "$GLM_API_BASE",
       "openai_api_key": "$GLM_API_KEY"
     }

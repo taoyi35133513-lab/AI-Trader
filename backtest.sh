@@ -202,7 +202,7 @@ async def run_all():
 asyncio.run(run_all())
 "
     else
-        python3 start.py --skip-backend -f "$freq"
+        python3 start.py --skip-data -f "$freq"
     fi
 }
 
