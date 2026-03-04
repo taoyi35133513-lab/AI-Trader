@@ -434,8 +434,8 @@ function createChart() {
 
             // Request animation frame to continuously update the pulse effect
             requestAnimationFrame(() => {
-                if (chart && !chart.destroyed) {
-                    chart.update('none'); // Update without animation to maintain smooth pulse
+                if (chartInstance && !chartInstance.destroyed) {
+                    chartInstance.update('none'); // Update without animation to maintain smooth pulse
                 }
             });
         }
