@@ -209,40 +209,54 @@ class AgentService:
                 positions_by_date[date_key] = pos
 
         # 按日期排序
-        sorted_dates = sorted(positions_by_date.keys())
-        unique_positions = [positions_by_date[d] for d in sorted_dates]
+        sorted_pos_dates = sorted(positions_by_date.keys())
 
-        # 计算每日资产价值
+        # Get all trading dates from price data to fill gaps between position records.
+        # For daily market, query distinct trade_date; for hourly, use position dates only.
+        all_trading_dates = sorted_pos_dates
+        if market != "cn_hour" and len(sorted_pos_dates) >= 1:
+            first_date = sorted_pos_dates[0]
+            try:
+                rows = self.conn.execute(
+                    "SELECT DISTINCT trade_date FROM stock_daily_prices "
+                    "WHERE trade_date >= ? ORDER BY trade_date",
+                    [first_date],
+                ).fetchall()
+                if rows:
+                    all_trading_dates = [r[0] for r in rows]
+            except Exception:
+                pass
+
+        # Compute portfolio value for each trading date using the most recent position
         history = []
-        for pos in unique_positions:
-            pos_dict = pos.get("positions", {})
+        current_pos = None
+        pos_idx = 0
+        for date_str in all_trading_dates:
+            # Advance to the latest position record on or before this date
+            while pos_idx < len(sorted_pos_dates) and sorted_pos_dates[pos_idx] <= date_str:
+                current_pos = positions_by_date[sorted_pos_dates[pos_idx]]
+                pos_idx += 1
+
+            if current_pos is None:
+                continue
+
+            pos_dict = current_pos.get("positions", {})
             cash = float(pos_dict.get("CASH", 0))
 
-            # 计算股票市值
             stock_value = 0
-            raw_date = pos.get("date", "")
-            # 小时级市场使用完整时间戳查询价格，日线市场使用日期
-            if market == "cn_hour":
-                price_date_str = raw_date  # 完整时间戳如 "2025-12-31 15:00:00"
-            else:
-                price_date_str = raw_date.split(" ")[0]  # 只取日期部分
-
             for symbol, quantity in pos_dict.items():
                 if symbol == "CASH" or quantity == 0:
                     continue
-
-                # 从数据库获取价格
-                price_data = self._get_price_for_date(symbol, price_date_str, market)
+                price_data = self._get_price_for_date(symbol, date_str, market)
                 if price_data:
                     stock_value += float(price_data.get("close", 0)) * quantity
 
             total_value = cash + stock_value
             return_pct = ((total_value - initial_cash) / initial_cash) * 100
 
-            # 返回的 date 字段：小时级保留完整时间戳，日线只保留日期
             history.append(
                 {
-                    "date": price_date_str,
+                    "date": date_str,
                     "total_value": round(total_value, 2),
                     "cash": round(cash, 2),
                     "stock_value": round(stock_value, 2),
