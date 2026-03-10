@@ -216,9 +216,13 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
             self.register_agent()
             REGISTER = True
         # Take the larger lower bound between init_dt and last_processed_dt
+        # Use strict '>' only when min_datetime equals the last processed date
+        # (to avoid re-processing). Use '>=' when min_datetime comes from
+        # init_dt (which already points to the next unprocessed timestamp).
+        use_strict_lower = False
         if last_processed_dt is not None:
-            # If last processed has time, we will filter strictly greater than it;
             min_datetime = max(init_dt, last_processed_dt)
+            use_strict_lower = (min_datetime == last_processed_dt)
             if not has_time:
                 last_processed_dt = last_processed_dt.date()
 
@@ -235,11 +239,10 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
                 else:
                     ts_dt = datetime.strptime(ts_str, "%Y-%m-%d").date()
                 # Check if timestamp is in range with boundary rules
-                in_lower = False
-                if last_processed_dt is None:
-                    in_lower = ts_dt >= min_datetime
-                else:
+                if use_strict_lower:
                     in_lower = ts_dt > min_datetime
+                else:
+                    in_lower = ts_dt >= min_datetime
                 if in_lower and ts_dt <= end_dt:
                     trading_times.append(ts_str)
 

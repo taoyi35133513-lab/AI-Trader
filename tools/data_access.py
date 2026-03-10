@@ -61,11 +61,13 @@ class PriceDataAccess:
         self.fallback_enabled = _is_fallback_enabled()
         self.market = market
 
-    def _get_db_manager(self, read_only: bool = True):
+    def _get_db_manager(self, read_only: bool = False):
         """Get DatabaseManager instance (lazy import to avoid circular dependency).
 
         Args:
-            read_only: Use read-only mode for concurrent access (default: True)
+            read_only: Use read-only mode for concurrent access (default: False
+                       to avoid DuckDB 'different configuration' errors when
+                       other connections in the same process are read-write)
         """
         from data.database.connection import DatabaseManager
         return DatabaseManager(read_only=read_only)

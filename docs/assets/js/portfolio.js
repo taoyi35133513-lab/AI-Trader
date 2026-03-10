@@ -45,41 +45,11 @@ async function loadDataAndRefresh() {
 
 // Update market buttons visibility based on enabled markets in config
 function updateMarketButtonsVisibility() {
-    const config = window.configLoader.config;
-    if (!config || !config.markets) return;
-
-    const usBtn = document.getElementById('usMarketBtn');
     const cnBtn = document.getElementById('cnMarketBtn');
     const granularityWrapper = document.getElementById('granularityWrapper');
 
-    // Check if US market is enabled
-    const usEnabled = config.markets.us && config.markets.us.enabled !== false;
-    // Check if any CN market is enabled (cn or cn_hour)
-    const cnEnabled = (config.markets.cn && config.markets.cn.enabled !== false) ||
-                      (config.markets.cn_hour && config.markets.cn_hour.enabled !== false);
-
-    // Show/hide US market button
-    if (usBtn) {
-        usBtn.style.display = usEnabled ? '' : 'none';
-    }
-
-    // Show/hide CN market button
-    if (cnBtn) {
-        cnBtn.style.display = cnEnabled ? '' : 'none';
-    }
-
-    // Check if only one granularity is enabled for CN
-    const cnDailyEnabled = config.markets.cn && config.markets.cn.enabled !== false;
-    const cnHourlyEnabled = config.markets.cn_hour && config.markets.cn_hour.enabled !== false;
-
-    // If only one CN granularity is enabled, hide the granularity wrapper
-    if (granularityWrapper) {
-        if (!cnEnabled || (cnDailyEnabled && !cnHourlyEnabled) || (!cnDailyEnabled && cnHourlyEnabled)) {
-            granularityWrapper.classList.add('hidden');
-        }
-    }
-
-    console.log(`Market buttons visibility - US: ${usEnabled}, CN: ${cnEnabled} (daily: ${cnDailyEnabled}, hourly: ${cnHourlyEnabled})`);
+    if (cnBtn) cnBtn.style.display = '';
+    if (granularityWrapper) granularityWrapper.classList.remove('hidden');
 }
 
 // Initialize the page
@@ -90,16 +60,9 @@ async function init() {
     // Load config first to determine enabled markets
     await window.configLoader.loadConfig();
 
-    // Get enabled markets and set initial market to first enabled one
-    const enabledMarkets = window.configLoader.getEnabledMarkets();
-    const enabledMarketIds = Object.keys(enabledMarkets);
-
-    if (enabledMarketIds.length > 0) {
-        // Set dataLoader to first enabled market
-        const firstEnabledMarket = enabledMarketIds[0];
-        dataLoader.setMarket(firstEnabledMarket);
-        console.log(`Initial market set to: ${firstEnabledMarket} (first enabled market)`);
-    }
+    // Default to CN daily market
+    dataLoader.setMarket('cn');
+    console.log('Initial market set to: cn');
 
     // Update market buttons visibility based on config
     updateMarketButtonsVisibility();
@@ -111,15 +74,26 @@ async function init() {
     updateMarketUI();
 }
 
-// Populate agent selector dropdown
+// Populate agent selector dropdown (excludes benchmark)
 function populateAgentSelector() {
     const select = document.getElementById('agentSelect');
-    select.innerHTML = '';
+    // Clear existing options safely
+    while (select.firstChild) {
+        select.removeChild(select.firstChild);
+    }
+
+    // Get benchmark name to exclude it from dropdown
+    const marketConfig = dataLoader.getMarketConfig();
+    const benchmarkName = marketConfig ? marketConfig.benchmark_display_name : null;
 
     Object.keys(allAgentsData).forEach(agentName => {
+        // Skip benchmark entries (they have no positions data)
+        if (benchmarkName && agentName === benchmarkName) return;
+        const data = allAgentsData[agentName];
+        if (!data || !data.positions || data.positions.length === 0) return;
+
         const option = document.createElement('option');
         option.value = agentName;
-        // Use text only for dropdown options (HTML select doesn't support images well)
         option.textContent = dataLoader.getAgentDisplayName(agentName);
         select.appendChild(option);
     });
@@ -626,31 +600,20 @@ function applyTradeFilters() {
 // Update UI based on current market state
 function updateMarketUI() {
     const currentMarket = dataLoader.getMarket();
-    const usBtn = document.getElementById('usMarketBtn');
     const cnBtn = document.getElementById('cnMarketBtn');
     const granularityWrapper = document.getElementById('granularityWrapper');
     const dailyBtn = document.getElementById('dailyBtn');
     const hourlyBtn = document.getElementById('hourlyBtn');
 
-    // Reset all active states
-    if (usBtn) usBtn.classList.remove('active');
-    if (cnBtn) cnBtn.classList.remove('active');
+    if (cnBtn) cnBtn.classList.add('active');
+    if (granularityWrapper) granularityWrapper.classList.remove('hidden');
     if (dailyBtn) dailyBtn.classList.remove('active');
     if (hourlyBtn) hourlyBtn.classList.remove('active');
 
-    if (currentMarket === 'us') {
-        if (usBtn) usBtn.classList.add('active');
-        if (granularityWrapper) granularityWrapper.classList.add('hidden');
+    if (currentMarket === 'cn_hour') {
+        if (hourlyBtn) hourlyBtn.classList.add('active');
     } else {
-        // Both 'cn' and 'cn_hour' keep the main CN button active
-        if (cnBtn) cnBtn.classList.add('active');
-        if (granularityWrapper) granularityWrapper.classList.remove('hidden');
-        
-        if (currentMarket === 'cn_hour') {
-            if (hourlyBtn) hourlyBtn.classList.add('active');
-        } else {
-            if (dailyBtn) dailyBtn.classList.add('active');
-        }
+        if (dailyBtn) dailyBtn.classList.add('active');
     }
 }
 
@@ -661,29 +624,17 @@ function setupEventListeners() {
     });
 
     // Market switching
-    const usMarketBtn = document.getElementById('usMarketBtn');
     const cnMarketBtn = document.getElementById('cnMarketBtn');
-    
+
     // Granularity switching
     const dailyBtn = document.getElementById('dailyBtn');
     const hourlyBtn = document.getElementById('hourlyBtn');
 
-    if (usMarketBtn) {
-        usMarketBtn.addEventListener('click', async () => {
-            if (dataLoader.getMarket() !== 'us') {
-                dataLoader.setMarket('us');
-                updateMarketUI();
-                await loadDataAndRefresh();
-            }
-        });
-    }
-
     if (cnMarketBtn) {
         cnMarketBtn.addEventListener('click', async () => {
             const current = dataLoader.getMarket();
-            // If not currently in any CN mode, switch to default CN (Hourly)
             if (current !== 'cn' && current !== 'cn_hour') {
-                dataLoader.setMarket('cn_hour');
+                dataLoader.setMarket('cn');
                 updateMarketUI();
                 await loadDataAndRefresh();
             }

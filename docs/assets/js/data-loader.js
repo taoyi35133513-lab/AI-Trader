@@ -798,7 +798,7 @@ class DataLoader {
                 await this.loadAStockPrices();
             }
 
-            const response = await fetch(`${this.apiBaseUrl}/api/dashboard/${this.currentMarket}`);
+            const response = await fetch(`${this.apiBaseUrl}/api/dashboard/${this.currentMarket}?enabled_only=true`);
             if (!response.ok) {
                 throw new Error(`API returned ${response.status}`);
             }

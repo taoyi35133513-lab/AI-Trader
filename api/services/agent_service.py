@@ -17,6 +17,14 @@ import pandas as pd
 
 from api.config import get_data_dir, get_project_root, load_config_json
 from api.services.position_service_v2 import PositionServiceV2
+from api.utils.model_display import (
+    PROVIDER_COLORS,
+    PROVIDER_ICONS,
+    display_name as _display_name,
+    get_provider as _get_provider,
+    iter_valid_models as _iter_valid_models,
+    resolve_model_name as _resolve_model_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,49 +40,91 @@ class AgentService:
     def get_all_agents(self, market: str = "cn") -> List[dict]:
         """获取所有 Agent 信息
 
+        Discovers agents from three sources and merges (dedup by name):
+        1. Data directory scan (folders containing position/position.jsonl)
+        2. DuckDB positions table (distinct agent_name)
+        3. Config models (for metadata, not filtered by enabled)
+
         Args:
             market: 市场 (cn/cn_hour/us)
 
         Returns:
             Agent 信息列表
         """
-        # 使用统一的配置文件
         config = load_config_json("config.json")
-
-        agents = []
-        models = config.get("models", [])
         initial_cash = config.get("agent_config", {}).get("initial_cash", 100000)
+        is_hourly = market == "cn_hour"
 
-        # 根据 market 确定 signature 后缀
-        signature_suffix = "-astock-hour" if market == "cn_hour" else ""
+        # Build a lookup of config model metadata keyed by agent folder name
+        config_meta: Dict[str, dict] = {}
+        for model, name in _iter_valid_models(config):
+            folder = f"{name}-astock-hour" if is_hourly else name
+            config_meta[folder] = model
 
-        # Agent 图标和颜色映射
-        icons = ["🤖", "🧠", "💡", "🎯", "🚀", "⚡", "🔮", "🎨"]
-        colors = [
-            "#4CAF50",
-            "#2196F3",
-            "#FF9800",
-            "#E91E63",
-            "#9C27B0",
-            "#00BCD4",
-            "#FF5722",
-            "#795548",
-        ]
+        discovered_names: set = set()
 
-        for i, model in enumerate(models):
-            if model.get("enabled", True):
-                base_name = model.get("signature", model.get("name"))
-                agent_name = f"{base_name}{signature_suffix}"
-                agents.append(
-                    {
-                        "name": agent_name,
-                        "display_name": model.get("name", model.get("signature")),
-                        "market": market,
-                        "initial_cash": initial_cash,
-                        "icon": icons[i % len(icons)],
-                        "color": colors[i % len(colors)],
-                    }
-                )
+        # --- Source 1: Scan data directory ---
+        data_dir = get_data_dir(market)
+        if data_dir.exists():
+            for child in data_dir.iterdir():
+                if child.is_dir():
+                    position_file = child / "position" / "position.jsonl"
+                    if position_file.exists():
+                        agent_name = child.name
+                        # Filter by hourly suffix
+                        if is_hourly and not agent_name.endswith("-astock-hour"):
+                            continue
+                        if not is_hourly and agent_name.endswith("-astock-hour"):
+                            continue
+                        discovered_names.add(agent_name)
+
+        # --- Source 2: DuckDB positions table ---
+        try:
+            if is_hourly:
+                sql = "SELECT DISTINCT agent_name FROM positions WHERE market = 'cn' AND agent_name LIKE '%-astock-hour'"
+            else:
+                sql = "SELECT DISTINCT agent_name FROM positions WHERE market = 'cn' AND agent_name NOT LIKE '%-astock-hour'"
+            rows = self.conn.execute(sql).fetchall()
+            for row in rows:
+                discovered_names.add(row[0])
+        except Exception as e:
+            logger.debug(f"DuckDB agent discovery query failed (table may not exist): {e}")
+
+        # --- Source 3: Config models (add any not yet discovered) ---
+        for folder_name in config_meta:
+            discovered_names.add(folder_name)
+
+        # --- Build agent list ---
+        agents = []
+        for agent_name in sorted(discovered_names):
+            # Determine the base model name (strip -astock-hour suffix for display)
+            base_name = agent_name
+            if is_hourly and base_name.endswith("-astock-hour"):
+                base_name = base_name[: -len("-astock-hour")]
+
+            # Use config metadata if available
+            model_cfg = config_meta.get(agent_name, {})
+            cfg_name = _resolve_model_name(model_cfg) if model_cfg else None
+            display_name = _display_name(cfg_name) if cfg_name else _display_name(base_name)
+
+            provider = _get_provider(base_name)
+            icon = PROVIDER_ICONS.get(provider, "./figs/stock.svg")
+            color = PROVIDER_COLORS.get(provider, "#999999")
+
+            # Determine enabled status from config
+            model_enabled = model_cfg.get("enabled", False) if model_cfg else False
+
+            agents.append(
+                {
+                    "name": agent_name,
+                    "display_name": display_name,
+                    "market": market,
+                    "initial_cash": initial_cash,
+                    "icon": icon,
+                    "color": color,
+                    "enabled": model_enabled,
+                }
+            )
 
         return agents
 
@@ -223,7 +273,8 @@ class AgentService:
                     [first_date],
                 ).fetchall()
                 if rows:
-                    all_trading_dates = [r[0] for r in rows]
+                    # Convert datetime.date to string for consistent comparison
+                    all_trading_dates = [str(r[0]) for r in rows]
             except Exception:
                 pass
 
@@ -295,17 +346,17 @@ class AgentService:
         """
         try:
             if market == "cn_hour":
-                # 小时级：查询 stock_hourly_prices 表
                 sql = """
                     SELECT close FROM stock_hourly_prices
-                    WHERE ts_code = ? AND trade_time = ?
+                    WHERE ts_code = ? AND trade_time <= ?
+                    ORDER BY trade_time DESC LIMIT 1
                 """
                 result = self.conn.execute(sql, [symbol, date_str]).fetchone()
             else:
-                # 日线：查询 stock_daily_prices 表
                 sql = """
                     SELECT close FROM stock_daily_prices
-                    WHERE ts_code = ? AND trade_date = ?
+                    WHERE ts_code = ? AND trade_date <= ?
+                    ORDER BY trade_date DESC LIMIT 1
                 """
                 result = self.conn.execute(sql, [symbol, date_str]).fetchone()
 
@@ -315,16 +366,18 @@ class AgentService:
             pass
         return None
 
-    def get_leaderboard(self, market: str = "cn") -> List[dict]:
+    def get_leaderboard(self, market: str = "cn", agents: Optional[List[dict]] = None) -> List[dict]:
         """获取排行榜
 
         Args:
             market: 市场
+            agents: 可选的预过滤 Agent 列表，为 None 时使用 get_all_agents()
 
         Returns:
             排行榜数据
         """
-        agents = self.get_all_agents(market)
+        if agents is None:
+            agents = self.get_all_agents(market)
         leaderboard = []
 
         for agent in agents:
@@ -351,18 +404,20 @@ class AgentService:
         return leaderboard
 
     def get_recent_trades(
-        self, market: str = "cn", limit: int = 20
+        self, market: str = "cn", limit: int = 20, agents: Optional[List[dict]] = None
     ) -> List[dict]:
         """获取最近交易记录
 
         Args:
             market: 市场
             limit: 返回数量
+            agents: 可选的预过滤 Agent 列表，为 None 时使用 get_all_agents()
 
         Returns:
             交易记录列表
         """
-        agents = self.get_all_agents(market)
+        if agents is None:
+            agents = self.get_all_agents(market)
         all_trades = []
 
         for agent in agents:

@@ -123,38 +123,20 @@ function updateMarketButtonsVisibility() {
     const config = window.configLoader.config;
     if (!config || !config.markets) return;
 
-    const usBtn = document.getElementById('usMarketBtn');
     const cnBtn = document.getElementById('cnMarketBtn');
     const granularityWrapper = document.getElementById('granularityWrapper');
 
-    // Check if US market is enabled
-    const usEnabled = config.markets.us && config.markets.us.enabled !== false;
-    // Check if any CN market is enabled (cn or cn_hour)
-    const cnEnabled = (config.markets.cn && config.markets.cn.enabled !== false) ||
-                      (config.markets.cn_hour && config.markets.cn_hour.enabled !== false);
-
-    // Show/hide US market button
-    if (usBtn) {
-        usBtn.style.display = usEnabled ? '' : 'none';
-    }
-
-    // Show/hide CN market button
+    // CN market is always shown since we have data
     if (cnBtn) {
-        cnBtn.style.display = cnEnabled ? '' : 'none';
+        cnBtn.style.display = '';
     }
 
-    // Check if only one granularity is enabled for CN
-    const cnDailyEnabled = config.markets.cn && config.markets.cn.enabled !== false;
-    const cnHourlyEnabled = config.markets.cn_hour && config.markets.cn_hour.enabled !== false;
-
-    // If only one CN granularity is enabled, hide the granularity wrapper
+    // Always show granularity wrapper for CN market (daily/hourly toggle)
     if (granularityWrapper) {
-        if (!cnEnabled || (cnDailyEnabled && !cnHourlyEnabled) || (!cnDailyEnabled && cnHourlyEnabled)) {
-            granularityWrapper.classList.add('hidden');
-        }
+        granularityWrapper.classList.remove('hidden');
     }
 
-    console.log(`Market buttons visibility - US: ${usEnabled}, CN: ${cnEnabled} (daily: ${cnDailyEnabled}, hourly: ${cnHourlyEnabled})`);
+    console.log('Market buttons visibility updated for CN market');
 }
 
 // Initialize the page
@@ -169,19 +151,9 @@ async function init() {
     await window.configLoader.loadConfig();
     console.log('[init] Config loaded:', window.configLoader.config);
 
-    // Get enabled markets and set initial market to first enabled one
-    const enabledMarkets = window.configLoader.getEnabledMarkets();
-    const enabledMarketIds = Object.keys(enabledMarkets);
-    console.log('[init] Enabled markets:', enabledMarketIds);
-
-    if (enabledMarketIds.length > 0) {
-        // Set dataLoader to first enabled market
-        const firstEnabledMarket = enabledMarketIds[0];
-        dataLoader.setMarket(firstEnabledMarket);
-        console.log(`[init] Initial market set to: ${firstEnabledMarket}`);
-    } else {
-        console.warn('[init] No enabled markets found!');
-    }
+    // Default to CN daily market (A-shares)
+    dataLoader.setMarket('cn');
+    console.log('[init] Initial market set to: cn');
 
     // Update market buttons visibility based on config
     console.log('[init] Updating market buttons visibility...');
@@ -218,11 +190,13 @@ function updateStats() {
         }
     });
 
-    // Find best performer
+    // Find best performer (exclude benchmarks)
     let bestAgent = null;
     let bestReturn = -Infinity;
+    const isBenchmarkName = (name) => name.includes('QQQ') || name.includes('SSE') || name.includes('上证');
 
     agentNames.forEach(name => {
+        if (isBenchmarkName(name)) return; // Skip benchmarks
         const returnValue = allAgentsData[name].return;
         if (returnValue > bestReturn) {
             bestReturn = returnValue;
@@ -230,8 +204,9 @@ function updateStats() {
         }
     });
 
-    // Update DOM
-    document.getElementById('agent-count').textContent = agentCount;
+    // Update DOM (exclude benchmarks from count)
+    const actualAgentCount = agentNames.filter(n => !isBenchmarkName(n)).length;
+    document.getElementById('agent-count').textContent = actualAgentCount;
 
     // Format date range - uniform format for both markets
     const formatDateRange = (dateStr) => {
@@ -353,8 +328,14 @@ function createChart() {
             chart.data.datasets.forEach((dataset, datasetIndex) => {
                 const meta = chart.getDatasetMeta(datasetIndex);
                 if (!meta.hidden && dataset.data.length > 0) {
-                    // Get the last point
-                    const lastPoint = meta.data[meta.data.length - 1];
+                    // Get the last non-null data point (benchmark may have trailing nulls)
+                    let lastPoint = null;
+                    for (let i = dataset.data.length - 1; i >= 0; i--) {
+                        if (dataset.data[i].y !== null && meta.data[i]) {
+                            lastPoint = meta.data[i];
+                            break;
+                        }
+                    }
 
                     if (lastPoint) {
                         const x = lastPoint.x;
@@ -770,33 +751,26 @@ function exportData() {
 // Update UI based on current market state
 function updateMarketUI() {
     const currentMarket = dataLoader.getMarket();
-    const usBtn = document.getElementById('usMarketBtn');
     const cnBtn = document.getElementById('cnMarketBtn');
     const granularityWrapper = document.getElementById('granularityWrapper');
     const dailyBtn = document.getElementById('dailyBtn');
     const hourlyBtn = document.getElementById('hourlyBtn');
 
-    // Reset all active states
-    if (usBtn) usBtn.classList.remove('active');
+    // Reset active states
     if (cnBtn) cnBtn.classList.remove('active');
     if (dailyBtn) dailyBtn.classList.remove('active');
     if (hourlyBtn) hourlyBtn.classList.remove('active');
 
-    if (currentMarket === 'us') {
-        if (usBtn) usBtn.classList.add('active');
-        if (granularityWrapper) granularityWrapper.classList.add('hidden');
+    // CN market is always active
+    if (cnBtn) cnBtn.classList.add('active');
+    if (granularityWrapper) granularityWrapper.classList.remove('hidden');
+
+    if (currentMarket === 'cn_hour') {
+        if (hourlyBtn) hourlyBtn.classList.add('active');
     } else {
-        // Both 'cn' and 'cn_hour' keep the main CN button active
-        if (cnBtn) cnBtn.classList.add('active');
-        if (granularityWrapper) granularityWrapper.classList.remove('hidden');
-        
-        if (currentMarket === 'cn_hour') {
-            if (hourlyBtn) hourlyBtn.classList.add('active');
-        } else {
-            if (dailyBtn) dailyBtn.classList.add('active');
-        }
+        if (dailyBtn) dailyBtn.classList.add('active');
     }
-    
+
     updateMarketSubtitle();
 }
 
@@ -806,29 +780,18 @@ function setupEventListeners() {
     document.getElementById('export-chart').addEventListener('click', exportData);
 
     // Market switching
-    const usMarketBtn = document.getElementById('usMarketBtn');
     const cnMarketBtn = document.getElementById('cnMarketBtn');
-    
+
     // Granularity switching
     const dailyBtn = document.getElementById('dailyBtn');
     const hourlyBtn = document.getElementById('hourlyBtn');
 
-    if (usMarketBtn) {
-        usMarketBtn.addEventListener('click', async () => {
-            if (dataLoader.getMarket() !== 'us') {
-                dataLoader.setMarket('us');
-                updateMarketUI();
-                await loadDataAndRefresh();
-            }
-        });
-    }
-
     if (cnMarketBtn) {
         cnMarketBtn.addEventListener('click', async () => {
             const current = dataLoader.getMarket();
-            // If not currently in any CN mode, switch to default CN (Hourly)
+            // If not currently in any CN mode, switch to default CN (Daily)
             if (current !== 'cn' && current !== 'cn_hour') {
-                dataLoader.setMarket('cn_hour');
+                dataLoader.setMarket('cn');
                 updateMarketUI();
                 await loadDataAndRefresh();
             }

@@ -124,6 +124,17 @@ class AgentRunnerService:
         self._runs: Dict[str, AgentRun] = {}
         self._lock = asyncio.Lock()
 
+    @staticmethod
+    def _resolve_env_var(value: Optional[str]) -> Optional[str]:
+        """Resolve $ENV_VAR references in config values."""
+        if value and isinstance(value, str) and value.startswith("$"):
+            env_name = value[1:]
+            resolved = os.environ.get(env_name)
+            if resolved is None:
+                logger.warning("Environment variable %s not set", env_name)
+            return resolved
+        return value
+
     async def start_agent(
         self,
         model_config: Dict[str, Any],
@@ -197,8 +208,8 @@ class AgentRunnerService:
         try:
             model_name = model_config.get("name", "unknown")
             basemodel = model_config.get("basemodel")
-            openai_base_url = model_config.get("openai_base_url")
-            openai_api_key = model_config.get("openai_api_key")
+            openai_base_url = self._resolve_env_var(model_config.get("openai_base_url"))
+            openai_api_key = self._resolve_env_var(model_config.get("openai_api_key"))
 
             if not basemodel:
                 raise ValueError(f"Model {model_name} missing basemodel field")

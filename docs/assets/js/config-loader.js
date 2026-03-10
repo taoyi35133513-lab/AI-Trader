@@ -44,13 +44,14 @@ class ConfigLoader {
         }
     }
 
-    // Get all enabled agents for a specific market (or legacy global list)
+    // Get enabled agents for a specific market (or legacy global list)
+    // Returns only agents where enabled === true.
     getEnabledAgents(marketId = null) {
         // If market ID provided, use market-specific agents
         if (marketId) {
             const marketConfig = this.getMarketConfig(marketId);
             if (marketConfig && marketConfig.agents) {
-                return marketConfig.agents.filter(agent => agent.enabled !== false);
+                return marketConfig.agents.filter(a => a.enabled === true);
             }
         }
 
@@ -58,7 +59,7 @@ class ConfigLoader {
         if (!this.config || !this.config.agents) {
             return [];
         }
-        return this.config.agents.filter(agent => agent.enabled !== false);
+        return this.config.agents.filter(a => a.enabled === true);
     }
 
     // Get all agent folders (enabled only) for a specific market
@@ -237,3 +238,17 @@ class ConfigLoader {
 
 // Create a global instance
 window.configLoader = new ConfigLoader();
+
+// Preserve query parameters (e.g., ?api=...) when navigating between pages
+(function updateNavLinks() {
+    const search = window.location.search;
+    if (!search) return;
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('a.nav-link').forEach(link => {
+            const href = link.getAttribute('href');
+            if (href && !href.startsWith('http') && !href.includes('?')) {
+                link.setAttribute('href', href + search);
+            }
+        });
+    });
+})();

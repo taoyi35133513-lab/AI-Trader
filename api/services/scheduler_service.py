@@ -86,7 +86,10 @@ class SchedulerService:
         market: str = "cn"
     ) -> SchedulerStatus:
         """
-        Start the live trading scheduler.
+        Start the live trading scheduler or add jobs to an existing one.
+
+        If the scheduler is already running, new frequency jobs are added
+        so that daily and hourly can coexist in the same scheduler.
 
         Args:
             config: Configuration dictionary with models and settings
@@ -97,43 +100,55 @@ class SchedulerService:
             Current scheduler status
         """
         async with self._lock:
-            if self.is_running:
-                self._status.error_message = "Scheduler is already running"
-                return self._status
-
             try:
                 self._config = config
-                self._status.frequency = frequency
                 self._status.market = market
 
-                # Create scheduler
-                self._scheduler = AsyncIOScheduler(timezone=self._tz)
+                if not self.is_running:
+                    # Create and start a new scheduler
+                    self._scheduler = AsyncIOScheduler(timezone=self._tz)
+                    self._status.frequency = frequency
 
-                # Add jobs based on frequency
-                if frequency == "daily":
-                    self._add_daily_job()
-                elif frequency == "hourly":
-                    self._add_hourly_jobs()
+                    if frequency == "daily":
+                        self._add_daily_job()
+                    elif frequency == "hourly":
+                        self._add_hourly_jobs()
+                    else:
+                        raise ValueError(f"Invalid frequency: {frequency}")
+
+                    self._scheduler.start()
+                    self._status.running = True
+                    self._status.started_at = datetime.now(self._tz)
+                    self._status.error_message = None
+                    logger.info("SchedulerService started for %s market, %s frequency", market, frequency)
                 else:
-                    raise ValueError(f"Invalid frequency: {frequency}")
+                    # Scheduler already running — add jobs for the new frequency
+                    existing_freq = self._status.frequency or ""
+                    if frequency in existing_freq.split("+"):
+                        self._status.error_message = f"Frequency '{frequency}' already scheduled"
+                        return self._status
 
-                # Start scheduler
-                self._scheduler.start()
+                    if frequency == "daily":
+                        self._add_daily_job()
+                    elif frequency == "hourly":
+                        self._add_hourly_jobs()
+                    else:
+                        raise ValueError(f"Invalid frequency: {frequency}")
 
-                # Update status
-                self._status.running = True
-                self._status.started_at = datetime.now(self._tz)
-                self._status.error_message = None
+                    self._status.frequency = "+".join(
+                        sorted(set(existing_freq.split("+") + [frequency]))
+                    )
+                    self._status.error_message = None
+                    logger.info("SchedulerService added %s jobs to existing scheduler", frequency)
+
                 self._update_job_info()
-
-                logger.info("SchedulerService started for %s market, %s frequency", market, frequency)
 
             except Exception as e:
                 self._status.error_message = str(e)
-                self._status.running = False
-                if self._scheduler:
+                if not self.is_running and self._scheduler:
                     self._scheduler.shutdown(wait=False)
                     self._scheduler = None
+                    self._status.running = False
 
             return self._status
 
@@ -208,6 +223,7 @@ class SchedulerService:
             id="live_trading_daily",
             name="Live Trading (Daily)",
             replace_existing=True,
+            kwargs={"frequency_override": "daily"},
         )
         logger.info("SchedulerService added daily job: %02d:%02d (Mon-Fri)", hour, minute)
 
@@ -226,10 +242,22 @@ class SchedulerService:
                 id=job_id,
                 name=f"Live Trading ({hour:02d}:{minute:02d})",
                 replace_existing=True,
+                kwargs={"frequency_override": "hourly"},
             )
 
         times_str = ", ".join([f"{h:02d}:{m:02d}" for h, m in self.ASTOCK_HOURLY_TIMES])
         logger.info("SchedulerService added hourly jobs: %s (Mon-Fri)", times_str)
+
+    @staticmethod
+    def _resolve_env_var(value: Optional[str]) -> Optional[str]:
+        """Resolve $ENV_VAR references in config values."""
+        if value and isinstance(value, str) and value.startswith("$"):
+            env_name = value[1:]
+            resolved = os.environ.get(env_name)
+            if resolved is None:
+                logger.warning("Environment variable %s not set", env_name)
+            return resolved
+        return value
 
     def _update_job_info(self):
         """Update job information in status"""
@@ -256,10 +284,13 @@ class SchedulerService:
             if job.next_run_time
         ]
 
-    async def _run_live_trading_session(self):
+    async def _run_live_trading_session(self, frequency_override: Optional[str] = None):
         """Execute a live trading session"""
         now = datetime.now(self._tz)
-        frequency = self._status.frequency or "daily"
+        frequency = frequency_override or self._status.frequency or "daily"
+        # If frequency contains '+' (e.g. 'daily+hourly'), fall back to daily
+        if "+" in frequency:
+            frequency = "daily"
         market = self._status.market
 
         logger.info("=" * 60)
@@ -416,8 +447,8 @@ class SchedulerService:
 
         model_name = model_config.get("name", "unknown")
         basemodel = model_config.get("basemodel")
-        openai_base_url = model_config.get("openai_base_url")
-        openai_api_key = model_config.get("openai_api_key")
+        openai_base_url = self._resolve_env_var(model_config.get("openai_base_url"))
+        openai_api_key = self._resolve_env_var(model_config.get("openai_api_key"))
 
         if not basemodel:
             raise ValueError(f"Model {model_name} missing basemodel field")
@@ -462,13 +493,18 @@ class SchedulerService:
             max_retries=3,
             base_delay=1.0,
             initial_cash=100000.0,
-            init_date=today_date.split()[0],
+            init_date=today_date,
             openai_base_url=openai_base_url,
             openai_api_key=openai_api_key,
         )
 
-        # Initialize and run single trading session
+        # Initialize agent (MCP tools, LLM)
         await agent.initialize()
+
+        # Register agent if position file doesn't exist (creates initial cash position)
+        if not os.path.exists(agent.position_file):
+            agent.register_agent()
+
         await agent.run_trading_session(today_date)
 
         # Get summary

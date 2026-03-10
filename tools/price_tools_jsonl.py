@@ -19,6 +19,18 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
+def _parse_date(date_str: str) -> datetime:
+    """Parse a date string in either 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS' format."""
+    if " " in date_str:
+        return datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+    return datetime.strptime(date_str, "%Y-%m-%d")
+
+
+def _date_part(date_str: str) -> str:
+    """Extract just the date portion (YYYY-MM-DD) from a date or datetime string."""
+    return date_str.split(" ")[0]
+
+
 # ---------------------------------------------------------------------------
 # In-memory JSONL cache
 # ---------------------------------------------------------------------------
@@ -300,7 +312,10 @@ def get_latest_position_jsonl(
     if not position_file.exists():
         return {}, -1
 
-    # Try today first
+    today_dt = _parse_date(today_date)
+    today_date_part = _date_part(today_date)
+
+    # Try same-day records first (compare date part to catch all same-day timestamps)
     max_id_today = -1
     latest_positions_today: Dict[str, float] = {}
 
@@ -310,18 +325,25 @@ def get_latest_position_jsonl(
                 continue
             try:
                 doc = json.loads(line)
-                if doc.get("date") == today_date:
-                    current_id = doc.get("id", -1)
-                    if current_id > max_id_today:
-                        max_id_today = current_id
-                        latest_positions_today = doc.get("positions", {})
+                record_date = doc.get("date")
+                if not record_date:
+                    continue
+                # Match same-day records (handles hourly timestamps on same date)
+                if _date_part(record_date) == today_date_part:
+                    record_dt = _parse_date(record_date)
+                    # Only include records at or before today_date
+                    if record_dt <= today_dt:
+                        current_id = doc.get("id", -1)
+                        if current_id > max_id_today:
+                            max_id_today = current_id
+                            latest_positions_today = doc.get("positions", {})
             except Exception:
                 continue
 
     if max_id_today >= 0 and latest_positions_today:
         return latest_positions_today, max_id_today
 
-    # Fall back to finding most recent before today
+    # Fall back to finding most recent before today (use datetime comparison)
     all_records = []
     with position_file.open("r", encoding="utf-8") as f:
         for line in f:
@@ -330,7 +352,7 @@ def get_latest_position_jsonl(
             try:
                 doc = json.loads(line)
                 record_date = doc.get("date")
-                if record_date and record_date < today_date:
+                if record_date and _parse_date(record_date) < today_dt:
                     positions = doc.get("positions", {})
                     if positions:
                         all_records.append(doc)
@@ -339,7 +361,7 @@ def get_latest_position_jsonl(
 
     if all_records:
         all_records.sort(
-            key=lambda x: (x.get("date", ""), x.get("id", 0)),
+            key=lambda x: (_parse_date(x.get("date", "1970-01-01")), x.get("id", 0)),
             reverse=True
         )
         return all_records[0].get("positions", {}), all_records[0].get("id", -1)
@@ -356,6 +378,8 @@ def get_today_init_position_jsonl(
     if not position_file.exists():
         return {}
 
+    today_dt = _parse_date(today_date)
+
     all_records = []
     with position_file.open("r", encoding="utf-8") as f:
         for line in f:
@@ -364,7 +388,7 @@ def get_today_init_position_jsonl(
             try:
                 doc = json.loads(line)
                 record_date = doc.get("date")
-                if record_date and record_date < today_date:
+                if record_date and _parse_date(record_date) < today_dt:
                     all_records.append(doc)
             except Exception:
                 continue
@@ -372,7 +396,10 @@ def get_today_init_position_jsonl(
     if not all_records:
         return {}
 
-    all_records.sort(key=lambda x: (x.get("date", ""), x.get("id", 0)), reverse=True)
+    all_records.sort(
+        key=lambda x: (_parse_date(x.get("date", "1970-01-01")), x.get("id", 0)),
+        reverse=True
+    )
     return all_records[0].get("positions", {})
 
 

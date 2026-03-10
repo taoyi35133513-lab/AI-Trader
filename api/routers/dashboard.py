@@ -14,6 +14,7 @@ router = APIRouter()
 @router.get("/{market}")
 async def get_dashboard(
     market: str,
+    enabled_only: bool = Query(False, description="If true, only return enabled agents"),
     db=Depends(get_db),
 ):
     """获取仪表盘所有数据（一次请求）
@@ -30,7 +31,11 @@ async def get_dashboard(
     price_service = PriceService(db)
 
     # 获取 Agent 列表
-    agents = agent_service.get_all_agents(market)
+    all_agents = agent_service.get_all_agents(market)
+    if enabled_only:
+        agents = [a for a in all_agents if a.get("enabled", False)]
+    else:
+        agents = all_agents
 
     # 获取所有 Agent 资产历史
     asset_histories = []
@@ -43,13 +48,33 @@ async def get_dashboard(
             asset_histories.append(history)
 
     # 获取排行榜
-    leaderboard = agent_service.get_leaderboard(market)
+    leaderboard = agent_service.get_leaderboard(market, agents=agents)
 
     # 获取最近交易
-    recent_trades = agent_service.get_recent_trades(market, limit=20)
+    recent_trades = agent_service.get_recent_trades(market, limit=20, agents=agents)
 
-    # 获取基准数据
-    benchmark_data = price_service.get_benchmark_data(market)
+    # 根据 agent 数据的实际日期范围裁剪基准数据
+    from datetime import date as date_type
+
+    bench_start = None
+    bench_end = None
+    if asset_histories:
+        for h in asset_histories:
+            history = h.get("history", [])
+            if not history:
+                continue
+            first = history[0]["date"].split(" ")[0]
+            last = history[-1]["date"].split(" ")[0]
+            first_d = date_type.fromisoformat(first)
+            last_d = date_type.fromisoformat(last)
+            if bench_start is None or first_d < bench_start:
+                bench_start = first_d
+            if bench_end is None or last_d > bench_end:
+                bench_end = last_d
+
+    benchmark_data = price_service.get_benchmark_data(
+        market, start_date=bench_start, end_date=bench_end
+    )
 
     # 计算统计信息
     stats = {

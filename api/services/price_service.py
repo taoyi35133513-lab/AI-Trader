@@ -2,12 +2,17 @@
 价格数据服务
 """
 
+import json
+import logging
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import duckdb
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 class PriceService:
@@ -160,30 +165,48 @@ class PriceService:
     ) -> List[dict]:
         """获取基准指数数据
 
-        对于 A 股市场，使用上证50指数；
+        对于 A 股市场(cn 和 cn_hour)，使用上证50指数日线数据；
         对于美股市场，需要从文件加载 QQQ 数据。
         """
-        if market == "cn":
-            # 从数据库查询上证50指数数据
-            # 暂时使用股票数据的平均值作为基准
-            sql = """
-                SELECT trade_date, AVG(close) as value
-                FROM stock_daily_prices
-                WHERE market = 'cn'
-            """
-            params = []
+        if market in ("cn", "cn_hour"):
+            # Load SSE 50 index data from JSON file
+            project_root = Path(__file__).parent.parent.parent
+            index_file = project_root / "data" / "A_stock" / "index_daily_sse_50.json"
 
-            if start_date:
-                sql += " AND trade_date >= ?"
-                params.append(start_date)
-            if end_date:
-                sql += " AND trade_date <= ?"
-                params.append(end_date)
+            if not index_file.exists():
+                logger.warning("SSE 50 index file not found: %s", index_file)
+                return []
 
-            sql += " GROUP BY trade_date ORDER BY trade_date"
+            try:
+                with open(index_file, "r", encoding="utf-8") as f:
+                    index_data = json.load(f)
+            except Exception as e:
+                logger.error("Failed to load SSE 50 index file: %s", e)
+                return []
 
-            df = self.conn.execute(sql, params).df()
-            return df.to_dict("records")
+            time_series = index_data.get("Time Series (Daily)", {})
+            result = []
+            for date_str, values in time_series.items():
+                try:
+                    record_date = date.fromisoformat(date_str)
+                except ValueError:
+                    continue
+
+                if start_date and record_date < start_date:
+                    continue
+                if end_date and record_date > end_date:
+                    continue
+
+                close_val = values.get("4. close")
+                if close_val is not None:
+                    result.append({
+                        "trade_date": date_str,
+                        "close": float(close_val),
+                    })
+
+            # Sort by date ascending
+            result.sort(key=lambda x: x["trade_date"])
+            return result
 
         # US market - 需要从文件加载
         return []

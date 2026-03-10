@@ -349,7 +349,7 @@ def _get_today_buy_amount(symbol: str, today_date: str, signature: str) -> int:
     try:
         from data.database.connection import DatabaseManager
 
-        with DatabaseManager(read_only=True) as db:
+        with DatabaseManager(read_only=False) as db:
             sql = """
                 SELECT COALESCE(SUM(action_amount), 0) as total_bought
                 FROM positions
@@ -481,6 +481,14 @@ def sell(symbol: str, amount: int) -> Dict[str, Any]:
             "error": f"Symbol {symbol} not found! This action will not be allowed.",
             "symbol": symbol,
             "date": today_date,
+        }
+    # Validate price availability (e.g., timestamp not present in dataset yet)
+    if this_symbol_price is None:
+        return {
+            "error": f"Price data not available for {symbol} at {today_date}.",
+            "symbol": symbol,
+            "date": today_date,
+            "market": market,
         }
 
     # Step 4: Validate sell conditions
