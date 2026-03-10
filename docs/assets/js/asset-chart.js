@@ -1255,16 +1255,64 @@ function setupScrollListener() {
     });
 }
 
-// Format thinking text into paragraphs
+// Lightweight markdown renderer for agent reasoning
 function formatThinking(text) {
-    // Split by double newlines or numbered lists
-    const paragraphs = text.split(/\n\n+/).filter(p => p.trim());
+    if (!text || !text.trim()) return '';
 
-    if (paragraphs.length === 0) {
-        return `<p>${text}</p>`;
+    // Escape HTML entities first to prevent XSS
+    const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const escaped = esc(text);
+
+    // Split into blocks by double newlines
+    const blocks = escaped.split(/\n\n+/).filter(b => b.trim());
+    const html = [];
+
+    for (const block of blocks) {
+        const trimmed = block.trim();
+
+        // Headings: ## or ###
+        const headingMatch = trimmed.match(/^(#{1,4})\s+(.+)$/m);
+        if (headingMatch && trimmed.split('\n').length === 1) {
+            const level = Math.min(headingMatch[1].length + 2, 6); // h3-h6
+            html.push(`<h${level} class="md-heading">${inlineMarkdown(headingMatch[2])}</h${level}>`);
+            continue;
+        }
+
+        // Check if block is a list (lines starting with - or N.)
+        const lines = trimmed.split('\n');
+        const isUnorderedList = lines.every(l => /^\s*[-*]\s/.test(l.trim()) || !l.trim());
+        const isOrderedList = lines.every(l => /^\s*\d+[.)]\s/.test(l.trim()) || !l.trim());
+
+        if (isUnorderedList && lines.some(l => l.trim())) {
+            const items = lines.filter(l => l.trim()).map(l =>
+                `<li>${inlineMarkdown(l.trim().replace(/^[-*]\s+/, ''))}</li>`
+            );
+            html.push(`<ul class="md-list">${items.join('')}</ul>`);
+            continue;
+        }
+
+        if (isOrderedList && lines.some(l => l.trim())) {
+            const items = lines.filter(l => l.trim()).map(l =>
+                `<li>${inlineMarkdown(l.trim().replace(/^\d+[.)]\s+/, ''))}</li>`
+            );
+            html.push(`<ol class="md-list">${items.join('')}</ol>`);
+            continue;
+        }
+
+        // Regular paragraph (may contain inline list items mixed with text)
+        html.push(`<p>${inlineMarkdown(trimmed.replace(/\n/g, '<br>'))}</p>`);
     }
 
-    return paragraphs.map(p => `<p>${p.trim()}</p>`).join('');
+    return html.join('');
+}
+
+// Render inline markdown: **bold**, *italic*, `code`, ~~strike~~
+function inlineMarkdown(text) {
+    return text
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`(.+?)`/g, '<code class="md-code">$1</code>')
+        .replace(/~~(.+?)~~/g, '<del>$1</del>');
 }
 
 // Loading overlay controls

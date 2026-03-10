@@ -1385,11 +1385,60 @@ body {
 }
 
 .action-thinking p {
-    margin: 0 0 0.75rem 0;
+    margin: 0 0 0.6rem 0;
 }
 
 .action-thinking p:last-child {
     margin-bottom: 0;
+}
+
+/* Markdown rendered headings */
+.action-thinking .md-heading {
+    color: var(--text-primary);
+    font-weight: 600;
+    margin: 0.8rem 0 0.4rem 0;
+    font-size: 0.92rem;
+    letter-spacing: 0.01em;
+}
+
+.action-thinking .md-heading:first-child {
+    margin-top: 0;
+}
+
+/* Markdown lists */
+.action-thinking .md-list {
+    margin: 0.3rem 0 0.6rem 0;
+    padding-left: 1.4rem;
+}
+
+.action-thinking .md-list li {
+    margin-bottom: 0.25rem;
+    line-height: 1.55;
+}
+
+.action-thinking .md-list li:last-child {
+    margin-bottom: 0;
+}
+
+/* Nested bold/strong in content */
+.action-thinking strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.action-thinking em {
+    font-style: italic;
+    color: var(--text-secondary);
+}
+
+/* Inline code */
+.action-thinking .md-code {
+    background: rgba(255, 255, 255, 0.06);
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    color: var(--accent-cyan);
 }
 
 /* Scrollbar styling */
