@@ -19,13 +19,13 @@ PROVIDER_ICONS = {
 
 # Provider to color mapping
 PROVIDER_COLORS = {
-    "google": "#00d4ff",
-    "openai": "#ffbe0b",
-    "anthropic": "#8338ec",
-    "deepseek": "#ff006e",
-    "qwen": "#00ffcc",
-    "minimax": "#3a86ff",
-    "zhipu": "#6610f2",
+    "google": "#4A90D9",
+    "openai": "#F0C254",
+    "anthropic": "#7C6BDB",
+    "deepseek": "#E8596E",
+    "qwen": "#6CB4EE",
+    "minimax": "#5BA0E5",
+    "zhipu": "#6366F1",
 }
 
 

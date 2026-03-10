@@ -72,13 +72,13 @@ class DataLoader {
     inferBrandColor(agentName) {
         const provider = this.inferProviderKey(agentName);
         const colors = {
-            google: '#00d4ff',
-            qwen: '#00ffcc',
-            deepseek: '#ff006e',
-            openai: '#ffbe0b',
-            anthropic: '#8338ec',
-            minimax: '#3a86ff',
-            zhipu: '#6610f2'
+            google: '#4A90D9',
+            qwen: '#6CB4EE',
+            deepseek: '#E8596E',
+            openai: '#F0C254',
+            anthropic: '#7C6BDB',
+            minimax: '#5BA0E5',
+            zhipu: '#6366F1'
         };
         return colors[provider] || null;
     }

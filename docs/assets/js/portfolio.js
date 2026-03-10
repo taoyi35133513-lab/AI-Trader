@@ -404,8 +404,8 @@ async function updateAllocationChart(agentName) {
     // Create new chart
     const ctx = document.getElementById('allocationChart').getContext('2d');
     const colors = [
-        '#00d4ff', '#00ffcc', '#ff006e', '#ffbe0b', '#8338ec',
-        '#3a86ff', '#fb5607', '#06ffa5', '#ff006e', '#ffbe0b', '#8338ec'
+        '#4A90D9', '#6CB4EE', '#E8596E', '#F0C254', '#7C6BDB',
+        '#5BA0E5', '#E87D4F', '#4ECB8D', '#E8596E', '#F0C254', '#7C6BDB'
     ];
 
     allocationChart = new Chart(ctx, {
@@ -416,7 +416,7 @@ async function updateAllocationChart(agentName) {
                 data: topAllocations.map(a => a.value),
                 backgroundColor: colors,
                 borderWidth: 2,
-                borderColor: '#1a2238'
+                borderColor: '#1e2130'
             }]
         },
         options: {
@@ -426,7 +426,7 @@ async function updateAllocationChart(agentName) {
                 legend: {
                     position: 'bottom',
                     labels: {
-                        color: '#a0aec0',
+                        color: '#9AA0A6',
                         padding: 15,
                         font: {
                             size: 12
@@ -434,10 +434,10 @@ async function updateAllocationChart(agentName) {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(26, 34, 56, 0.95)',
-                    titleColor: '#00d4ff',
-                    bodyColor: '#fff',
-                    borderColor: '#2d3748',
+                    backgroundColor: 'rgba(24, 27, 36, 0.95)',
+                    titleColor: '#6CB4EE',
+                    bodyColor: '#E8EAED',
+                    borderColor: 'rgba(255, 255, 255, 0.08)',
                     borderWidth: 1,
                     padding: 12,
                     callbacks: {

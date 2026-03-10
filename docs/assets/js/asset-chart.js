@@ -9,14 +9,14 @@ let isLogScale = false;
 
 // Color palette for different agents
 const agentColors = [
-    '#00d4ff', // Cyan Blue
-    '#00ffcc', // Cyan
-    '#ff006e', // Hot Pink
-    '#ffbe0b', // Yellow
-    '#8338ec', // Purple
-    '#3a86ff', // Blue
-    '#fb5607', // Orange
-    '#06ffa5'  // Mint
+    '#4A90D9', // Finance Blue
+    '#6CB4EE', // Light Blue
+    '#E8596E', // Coral
+    '#F0C254', // Warm Gold
+    '#7C6BDB', // Soft Purple
+    '#5BA0E5', // Sky Blue
+    '#E87D4F', // Warm Orange
+    '#4ECB8D'  // Mint
 ];
 
 // Cache for loaded SVG images
@@ -251,7 +251,7 @@ function createChart() {
         // Special styling for benchmarks
         const isBenchmark = agentName.includes('QQQ') || agentName.includes('SSE') || agentName.includes('上证');
         if (isBenchmark) {
-            color = dataLoader.getAgentBrandColor(agentName) || '#ff6b00';
+            color = dataLoader.getAgentBrandColor(agentName) || '#E87D4F';
             borderWidth = 2;
             borderDash = [5, 5]; // Dashed line for benchmark
         } else {
@@ -599,12 +599,12 @@ function createChart() {
                     type: 'category',
                     labels: sortedDates,
                     grid: {
-                        color: 'rgba(45, 55, 72, 0.3)',
+                        color: 'rgba(255, 255, 255, 0.06)',
                         drawBorder: false,
                         lineWidth: 1
                     },
                     ticks: {
-                        color: '#a0aec0',
+                        color: '#9AA0A6',
                         maxRotation: 45,
                         minRotation: 45,
                         autoSkip: true,
@@ -633,12 +633,12 @@ function createChart() {
                 y: {
                     type: isLogScale ? 'logarithmic' : 'linear',
                     grid: {
-                        color: 'rgba(45, 55, 72, 0.3)',
+                        color: 'rgba(255, 255, 255, 0.06)',
                         drawBorder: false,
                         lineWidth: 1
                     },
                     ticks: {
-                        color: '#a0aec0',
+                        color: '#9AA0A6',
                         callback: function(value) {
                             return dataLoader.formatCurrency(value);
                         },
@@ -665,7 +665,7 @@ function createLegend() {
         // Special styling for benchmarks
         const isBenchmark = agentName.includes('QQQ') || agentName.includes('SSE') || agentName.includes('上证');
         if (isBenchmark) {
-            color = dataLoader.getAgentBrandColor(agentName) || '#ff6b00';
+            color = dataLoader.getAgentBrandColor(agentName) || '#E87D4F';
             borderStyle = 'dashed';
         } else {
             color = dataLoader.getAgentBrandColor(agentName) || agentColors[index % agentColors.length];
