@@ -353,6 +353,10 @@ class SchedulerService:
                         execution_result["errors"].append(error_msg)
                         logger.error("Model %s - Failed: %s", model_name, e)
 
+            # Step 4: Sync prices to DuckDB and update benchmark index
+            logger.info("[Step 4] Syncing prices to database...")
+            await self._sync_post_session(frequency, now)
+
             execution_result["completed_at"] = datetime.now(self._tz).isoformat()
             self._status.last_execution = execution_result
 
@@ -426,6 +430,34 @@ class SchedulerService:
         except Exception as e:
             logger.error("Script execution failed: %s", e)
             return False
+
+    async def _sync_post_session(self, frequency: str, now: datetime):
+        """Sync price data to DuckDB after a trading session.
+
+        - For hourly: sync all hourly candles for today into DuckDB.
+        - For the last session of the day (15:05 hourly or daily):
+          also sync daily prices and update SSE 50 index.
+        """
+        trade_date = now.strftime("%Y-%m-%d")
+        try:
+            from data.sync_prices_db import (
+                sync_daily_prices,
+                sync_hourly_prices,
+                update_sse50_index,
+            )
+
+            if frequency == "hourly":
+                await asyncio.to_thread(sync_hourly_prices, trade_date)
+                # After last hourly session (15:05), also sync daily + index
+                if now.hour >= 15:
+                    await asyncio.to_thread(sync_daily_prices, trade_date)
+                    await asyncio.to_thread(update_sse50_index, trade_date)
+            else:
+                # Daily session — sync daily prices and index
+                await asyncio.to_thread(sync_daily_prices, trade_date)
+                await asyncio.to_thread(update_sse50_index, trade_date)
+        except Exception as e:
+            logger.warning("Post-session price sync failed: %s", e)
 
     async def _execute_single_model(
         self,

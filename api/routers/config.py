@@ -180,8 +180,19 @@ async def get_full_config():
         for folder_name in config_meta:
             discovered_folders.add(folder_name)
 
+        # Exclude live agent folders — their data is merged into
+        # the corresponding backtest agent's timeline instead.
+        def _is_live_folder(folder):
+            stripped = folder
+            if is_hourly and stripped.endswith("-astock-hour"):
+                stripped = stripped[: -len("-astock-hour")]
+            return stripped.endswith("-live")
+
         agents = []
         for folder_name in sorted(discovered_folders):
+            if _is_live_folder(folder_name):
+                continue
+
             if enabled_only:
                 model_cfg = config_meta.get(folder_name)
                 if not model_cfg or not model_cfg[0].get("enabled", False):

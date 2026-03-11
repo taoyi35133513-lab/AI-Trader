@@ -76,6 +76,29 @@ async def get_dashboard(
         market, start_date=bench_start, end_date=bench_end
     )
 
+    # For hourly market, expand daily benchmark to hourly timestamps
+    # so the X-axis aligns with agent hourly data points.
+    if market == "cn_hour" and benchmark_data and asset_histories:
+        # Collect all hourly timestamps from agent histories
+        agent_timestamps: set = set()
+        for h in asset_histories:
+            for entry in h.get("history", []):
+                agent_timestamps.add(entry["date"])
+
+        # Build date -> close lookup from daily benchmark
+        bench_by_date = {b["trade_date"]: b["close"] for b in benchmark_data}
+
+        # Expand: for each agent timestamp, find matching daily benchmark
+        expanded = []
+        for ts in sorted(agent_timestamps):
+            day_part = ts.split(" ")[0]
+            close = bench_by_date.get(day_part)
+            if close is not None:
+                expanded.append({"trade_date": ts, "close": close})
+
+        if expanded:
+            benchmark_data = expanded
+
     # 计算统计信息
     stats = {
         "agent_count": len(agents),

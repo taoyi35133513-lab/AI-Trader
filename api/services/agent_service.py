@@ -94,9 +94,16 @@ class AgentService:
         for folder_name in config_meta:
             discovered_names.add(folder_name)
 
-        # --- Build agent list ---
+        # --- Build agent list (exclude live agents; their data is merged) ---
         agents = []
         for agent_name in sorted(discovered_names):
+            # Skip live agent folders — data merged into backtest agent
+            stripped = agent_name
+            if is_hourly and stripped.endswith("-astock-hour"):
+                stripped = stripped[: -len("-astock-hour")]
+            if stripped.endswith("-live"):
+                continue
+
             # Determine the base model name (strip -astock-hour suffix for display)
             base_name = agent_name
             if is_hourly and base_name.endswith("-astock-hour"):
@@ -262,18 +269,24 @@ class AgentService:
         sorted_pos_dates = sorted(positions_by_date.keys())
 
         # Get all trading dates from price data to fill gaps between position records.
-        # For daily market, query distinct trade_date; for hourly, use position dates only.
         all_trading_dates = sorted_pos_dates
-        if market != "cn_hour" and len(sorted_pos_dates) >= 1:
+        if len(sorted_pos_dates) >= 1:
             first_date = sorted_pos_dates[0]
             try:
-                rows = self.conn.execute(
-                    "SELECT DISTINCT trade_date FROM stock_daily_prices "
-                    "WHERE trade_date >= ? ORDER BY trade_date",
-                    [first_date],
-                ).fetchall()
+                if market == "cn_hour":
+                    rows = self.conn.execute(
+                        "SELECT DISTINCT trade_time FROM stock_hourly_prices "
+                        "WHERE trade_time >= ? ORDER BY trade_time",
+                        [first_date],
+                    ).fetchall()
+                else:
+                    rows = self.conn.execute(
+                        "SELECT DISTINCT trade_date FROM stock_daily_prices "
+                        "WHERE trade_date >= ? ORDER BY trade_date",
+                        [first_date],
+                    ).fetchall()
                 if rows:
-                    # Convert datetime.date to string for consistent comparison
+                    # Convert to string for consistent comparison
                     all_trading_dates = [str(r[0]) for r in rows]
             except Exception:
                 pass
