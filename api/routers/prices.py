@@ -42,6 +42,18 @@ async def get_hourly_prices(
     return {"prices": prices, "symbols": symbol_list}
 
 
+@router.get("/stock-names")
+async def get_stock_names(db=Depends(get_db)):
+    """获取股票代码到名称的映射"""
+    try:
+        rows = db.execute(
+            "SELECT DISTINCT con_code, stock_name FROM index_weights WHERE stock_name IS NOT NULL"
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
+    except Exception:
+        return {}
+
+
 @router.get("/{symbol}")
 async def get_stock_price(
     symbol: str,

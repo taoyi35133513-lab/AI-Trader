@@ -360,8 +360,12 @@ def get_latest_position_jsonl(
                 continue
 
     if all_records:
+        # Sort by (date_part, id) so all records on the same calendar date are
+        # grouped together regardless of time component.  This prevents a
+        # registration record at "2026-03-10 12:00:00" from outranking a later
+        # buy record stored as "2026-03-10" (parsed as midnight).
         all_records.sort(
-            key=lambda x: (_parse_date(x.get("date", "1970-01-01")), x.get("id", 0)),
+            key=lambda x: (_date_part(x.get("date", "1970-01-01")), x.get("id", 0)),
             reverse=True
         )
         return all_records[0].get("positions", {}), all_records[0].get("id", -1)

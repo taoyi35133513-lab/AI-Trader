@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 from api.config import settings, load_config_json
 from api.routers import agents, benchmarks, config, dashboard, prices, agent_control, live_trading, market_data, positions
-from api.routers import agent_logs, agent_positions
+from api.routers import agent_logs, agent_positions, trade_comments
 from api.mcp_integration import get_mcp_apps, get_combined_lifespan
 
 
@@ -37,6 +37,69 @@ async def lifespan(app: FastAPI):
     from api.services.scheduler_service import get_scheduler_service
     scheduler = get_scheduler_service()
 
+    # DB migrations
+    try:
+        import duckdb as _duckdb
+        from api.config import get_database_path
+        _conn = _duckdb.connect(str(get_database_path()))
+
+        # Migrate: add system_prompt column if missing
+        _cols = [r[1] for r in _conn.execute("PRAGMA table_info('agent_trading_sessions')").fetchall()]
+        if "system_prompt" not in _cols:
+            _conn.execute("ALTER TABLE agent_trading_sessions ADD COLUMN system_prompt TEXT")
+            logger.info("Migrated: added system_prompt column to agent_trading_sessions")
+
+        # Migrate: ensure trade_comments table has sequence-based auto-increment id
+        _conn.execute("CREATE SEQUENCE IF NOT EXISTS trade_comments_id_seq START 1")
+        _tables = [r[0] for r in _conn.execute("SHOW TABLES").fetchall()]
+        if "trade_comments" not in _tables:
+            _conn.execute("""
+                CREATE TABLE trade_comments (
+                    id INTEGER DEFAULT nextval('trade_comments_id_seq') PRIMARY KEY,
+                    agent_name VARCHAR NOT NULL,
+                    market VARCHAR NOT NULL DEFAULT 'cn',
+                    trade_date VARCHAR(30) NOT NULL,
+                    ts_code VARCHAR(20) NOT NULL,
+                    action VARCHAR(10) NOT NULL,
+                    comment_text TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            _conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_agent ON trade_comments(agent_name)")
+            _conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_date ON trade_comments(trade_date)")
+            _conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_agent_market ON trade_comments(agent_name, market)")
+            logger.info("Created trade_comments table with sequence")
+        else:
+            # Check if existing table has old schema (no sequence default)
+            _id_col = [r for r in _conn.execute("PRAGMA table_info('trade_comments')").fetchall() if r[1] == 'id']
+            if _id_col and 'nextval' not in str(_id_col[0]):
+                # Old table without sequence — recreate (only if empty)
+                _count = _conn.execute("SELECT COUNT(*) FROM trade_comments").fetchone()[0]
+                if _count == 0:
+                    _conn.execute("DROP TABLE trade_comments")
+                    _conn.execute("""
+                        CREATE TABLE trade_comments (
+                            id INTEGER DEFAULT nextval('trade_comments_id_seq') PRIMARY KEY,
+                            agent_name VARCHAR NOT NULL,
+                            market VARCHAR NOT NULL DEFAULT 'cn',
+                            trade_date VARCHAR(30) NOT NULL,
+                            ts_code VARCHAR(20) NOT NULL,
+                            action VARCHAR(10) NOT NULL,
+                            comment_text TEXT NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                    _conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_agent ON trade_comments(agent_name)")
+                    _conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_date ON trade_comments(trade_date)")
+                    _conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_agent_market ON trade_comments(agent_name, market)")
+                    logger.info("Recreated trade_comments table with sequence (was empty)")
+
+        _conn.close()
+    except Exception as e:
+        logger.debug("DB migration check: %s", e)
+
     # Enter MCP lifespan
     async with mcp_lifespan(app):
         # Auto-start scheduler in live trading mode
@@ -46,8 +109,13 @@ async def lifespan(app: FastAPI):
             config_data = load_config_json("config.json")
             if config_data:
                 market = config_data.get("market", "cn")
-                logger.info("[Live Mode] Auto-starting scheduler (%s, %s)", frequency, market)
-                await scheduler.start_scheduler(config_data, frequency, market)
+                # Support compound frequency like "daily+hourly"
+                frequencies = frequency.split("+")
+                for freq in frequencies:
+                    freq = freq.strip()
+                    if freq:
+                        logger.info("[Live Mode] Auto-starting scheduler (%s, %s)", freq, market)
+                        await scheduler.start_scheduler(config_data, freq, market)
             else:
                 logger.warning("[Live Mode] Failed to load config, scheduler not started")
 
@@ -102,6 +170,7 @@ app.include_router(positions.router, prefix="/api/positions", tags=["Positions"]
 # 新增：DuckDB 统一数据 API
 app.include_router(agent_logs.router, tags=["Agent Logs"])
 app.include_router(agent_positions.router, tags=["Agent Positions V2"])
+app.include_router(trade_comments.router, tags=["Trade Comments"])
 
 # 挂载 MCP 服务
 # Each MCP service is mounted at /mcp/{service_name}/

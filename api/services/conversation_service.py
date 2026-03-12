@@ -24,6 +24,7 @@ class ConversationService:
         agent_name: str,
         market: str,
         session_timestamp: datetime,
+        system_prompt: str | None = None,
     ) -> int:
         """创建新的交易会话
 
@@ -31,6 +32,7 @@ class ConversationService:
             agent_name: Agent 名称
             market: 市场 (cn/cn_hour)
             session_timestamp: 会话时间戳
+            system_prompt: 本次交易使用的系统提示词
 
         Returns:
             session_id
@@ -47,16 +49,19 @@ class ConversationService:
         if existing:
             return existing[0]
 
-        # 创建新会话
+        # 创建新会话 (DuckDB INTEGER PK 不自增，需要手动生成 id)
+        next_id = self.conn.execute(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM agent_trading_sessions"
+        ).fetchone()[0]
         insert_sql = """
             INSERT INTO agent_trading_sessions
-            (agent_name, market, session_date, session_time, session_timestamp)
-            VALUES (?, ?, ?, ?, ?)
+            (id, agent_name, market, session_date, session_time, session_timestamp, system_prompt)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             RETURNING id
         """
         result = self.conn.execute(
             insert_sql,
-            [agent_name, market, session_date, session_time, session_timestamp],
+            [next_id, agent_name, market, session_date, session_time, session_timestamp, system_prompt],
         ).fetchone()
 
         session_id = result[0]
@@ -80,6 +85,43 @@ class ConversationService:
             session_id
         """
         return self.create_session(agent_name, market, session_timestamp)
+
+    def get_latest_prompt(self, agent_name: str, market: str = "cn") -> Optional[Dict]:
+        """获取 agent 最近一次交易会话的 system_prompt
+
+        优先从 DuckDB 会话记录获取，如果没有则动态生成当前 prompt。
+        """
+        sql = """
+            SELECT session_date, session_time, system_prompt
+            FROM agent_trading_sessions
+            WHERE agent_name = ? AND market = ? AND system_prompt IS NOT NULL
+            ORDER BY session_timestamp DESC LIMIT 1
+        """
+        row = self.conn.execute(sql, [agent_name, market]).fetchone()
+        if row:
+            return {
+                "session_date": str(row[0]),
+                "session_time": str(row[1]) if row[1] else None,
+                "system_prompt": row[2],
+            }
+
+        # Fallback: dynamically generate the current prompt
+        try:
+            from api.config import load_config_json
+            from prompts.agent_prompt_astock import get_agent_system_prompt_astock
+
+            config = load_config_json("config.json")
+            stock_symbols = config.get("stock_symbols", None)
+            today = datetime.now().strftime("%Y-%m-%d")
+            prompt = get_agent_system_prompt_astock(today, agent_name, stock_symbols)
+            return {
+                "session_date": today,
+                "session_time": None,
+                "system_prompt": prompt,
+            }
+        except Exception as e:
+            logger.warning("Failed to generate fallback prompt for %s: %s", agent_name, e)
+            return None
 
     def add_messages(
         self,
@@ -105,14 +147,18 @@ class ConversationService:
         """
         max_seq = self.conn.execute(max_seq_sql, [session_id]).fetchone()[0]
 
-        # 准备批量插入数据
+        # 准备批量插入数据 (DuckDB INTEGER PK 不自增，需要手动生成 id)
+        base_id = self.conn.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM agent_conversation_messages"
+        ).fetchone()[0]
         insert_sql = """
             INSERT INTO agent_conversation_messages
-            (session_id, message_sequence, role, content, tool_call_id, tool_name, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (id, session_id, message_sequence, role, content, tool_call_id, tool_name, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         for i, msg in enumerate(messages):
+            msg_id = base_id + i + 1
             seq = max_seq + i + 1
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
@@ -121,7 +167,7 @@ class ConversationService:
 
             self.conn.execute(
                 insert_sql,
-                [session_id, seq, role, content, tool_call_id, tool_name, base_timestamp],
+                [msg_id, session_id, seq, role, content, tool_call_id, tool_name, base_timestamp],
             )
 
         logger.debug(f"Added {len(messages)} messages to session {session_id}")

@@ -533,9 +533,40 @@ class SchedulerService:
         # Initialize agent (MCP tools, LLM)
         await agent.initialize()
 
-        # Register agent if position file doesn't exist (creates initial cash position)
+        # Register agent if position file doesn't exist.
+        # Try to inherit the backtest agent's last position for continuity;
+        # fall back to fresh initial cash if no backtest data exists.
         if not os.path.exists(agent.position_file):
-            agent.register_agent()
+            backtest_sig = generate_signature(model_name, frequency, TradingMode.BACKTEST)
+            backtest_pos_file = Path(log_path) / backtest_sig / "position" / "position.jsonl"
+            inherited = False
+            if backtest_pos_file.exists():
+                try:
+                    last_pos = None
+                    with open(backtest_pos_file, "r") as f:
+                        for line in f:
+                            if line.strip():
+                                last_pos = json.loads(line)
+                    if last_pos and last_pos.get("positions"):
+                        # Create the position directory
+                        pos_dir = Path(agent.position_file).parent
+                        pos_dir.mkdir(parents=True, exist_ok=True)
+                        # Write inherited position to BOTH JSONL and DuckDB
+                        from tools.data_access import PositionDataAccess
+                        pos_access = PositionDataAccess()
+                        init_action = {"action": "init_inherit", "symbol": "", "amount": 0}
+                        pos_access.add_position_record(
+                            today_date, signature, init_action, last_pos["positions"]
+                        )
+                        inherited = True
+                        logger.info(
+                            "Live agent %s inherited position from backtest %s (CASH=%.0f)",
+                            signature, backtest_sig, last_pos["positions"].get("CASH", 0),
+                        )
+                except Exception as e:
+                    logger.warning("Failed to inherit backtest position: %s", e)
+            if not inherited:
+                agent.register_agent()
 
         await agent.run_trading_session(today_date)
 

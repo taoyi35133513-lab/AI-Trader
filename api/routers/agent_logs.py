@@ -158,6 +158,20 @@ async def search_messages(
     return results
 
 
+@router.get("/{agent_name}/latest-prompt")
+async def get_latest_prompt(
+    agent_name: str,
+    market: str = Query("cn", description="市场 (cn/cn_hour)"),
+    db=Depends(get_db),
+):
+    """获取 Agent 最近一次交易使用的 system prompt"""
+    service = ConversationService(db)
+    result = service.get_latest_prompt(agent_name, market)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"No prompt found for {agent_name}")
+    return result
+
+
 @router.get("/all/sessions", response_model=List[ConversationSummary])
 async def get_all_sessions(
     market: str = Query("cn", description="市场"),

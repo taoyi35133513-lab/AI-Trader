@@ -32,6 +32,7 @@ from prompts.components.identity import IDENTITY_CN
 from prompts.components.tool_guide import TOOL_GUIDE_CN
 from prompts.components.market_rules_prompt import build_market_rules_section
 from prompts.components.portfolio import PORTFOLIO_TEMPLATE, FINISH_TEMPLATE
+from prompts.components.user_comments import build_user_comments_section
 
 STOP_SIGNAL = "<FINISH_SIGNAL>"
 
@@ -52,7 +53,7 @@ def build_system_prompt(
                           today_buy_price, current_profit, STOP_SIGNAL).
     """
     if components is None:
-        components = ["identity", "tool_guide", "market_rules", "portfolio", "finish"]
+        components = ["identity", "tool_guide", "market_rules", "portfolio", "user_comments", "finish"]
 
     sections: list[str] = []
     for name in components:
@@ -64,6 +65,10 @@ def build_system_prompt(
             sections.append(build_market_rules_section(market))
         elif name == "portfolio":
             sections.append(PORTFOLIO_TEMPLATE.format(**format_kwargs))
+        elif name == "user_comments":
+            user_comments_text = format_kwargs.get("user_comments", "")
+            if user_comments_text:
+                sections.append(user_comments_text)
         elif name == "finish":
             sections.append(FINISH_TEMPLATE.format(**format_kwargs))
 
@@ -110,6 +115,27 @@ def get_agent_system_prompt_astock(today_date: str, signature: str, stock_symbol
     yesterday_sell_prices_display = format_price_dict_with_names(yesterday_sell_prices, market="cn")
     today_buy_price_display = format_price_dict_with_names(today_buy_price, market="cn")
 
+    # 获取用户点评（用于注入 prompt）
+    user_comments_text = ""
+    try:
+        from api.config import get_database_path
+        import duckdb
+        db_path = get_database_path()
+        conn = duckdb.connect(str(db_path), read_only=True)
+        # Check if table exists
+        table_exists = conn.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'trade_comments'"
+        ).fetchone()[0]
+        if table_exists:
+            from api.services.comment_service import CommentService
+            service = CommentService(conn)
+            comments = service.get_latest_comments(signature, market="cn", limit=10)
+            if comments:
+                user_comments_text = build_user_comments_section(comments)
+        conn.close()
+    except Exception as e:
+        logger.debug("Failed to load user comments for prompt: %s", e)
+
     return build_system_prompt(
         market="cn",
         date=today_date,
@@ -118,6 +144,7 @@ def get_agent_system_prompt_astock(today_date: str, signature: str, stock_symbol
         yesterday_close_price=yesterday_sell_prices_display,
         today_buy_price=today_buy_price_display,
         current_profit=current_profit,
+        user_comments=user_comments_text,
     )
 
 

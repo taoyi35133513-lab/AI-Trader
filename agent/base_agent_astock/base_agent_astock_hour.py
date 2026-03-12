@@ -271,15 +271,22 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
         trading_logger.set_context(agent=self.signature, date=today_date)
         trading_logger.log_trading_day_start(today_date)
 
+        # Parse session timestamp for DuckDB logging
+        try:
+            session_timestamp = datetime.strptime(today_date, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            session_timestamp = datetime.now()
+
         # Set up logging
         log_file = self._setup_logging(today_date)
         write_config_value("LOG_FILE", log_file)
 
         # Update system prompt - use A-shares specific prompt
+        self._current_system_prompt = get_agent_system_prompt_astock(today_date, self.signature, self.stock_symbols)
         self.agent = create_agent(
             self.model,
             tools=self.tools,
-            system_prompt=get_agent_system_prompt_astock(today_date, self.signature, self.stock_symbols),
+            system_prompt=self._current_system_prompt,
         )
 
         # Initial user query in Chinese
@@ -287,7 +294,7 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
         message = user_query.copy()
 
         # Log initial message
-        self._log_message(log_file, user_query)
+        self._log_message(log_file, user_query, session_timestamp)
 
         # Trading loop
         current_step = 0
@@ -305,7 +312,7 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
                 # Check stop signal
                 if STOP_SIGNAL in agent_response:
                     trading_logger.info("收到停止信号，交易会话结束")
-                    self._log_message(log_file, [{"role": "assistant", "content": agent_response}])
+                    self._log_message(log_file, [{"role": "assistant", "content": agent_response}], session_timestamp)
                     break
 
                 # Extract tool messages with None check (enhanced error handling)
@@ -322,8 +329,8 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
                 message.extend(new_messages)
 
                 # Log messages
-                self._log_message(log_file, new_messages[0])
-                self._log_message(log_file, new_messages[1])
+                self._log_message(log_file, new_messages[0], session_timestamp)
+                self._log_message(log_file, new_messages[1], session_timestamp)
 
             except Exception as e:
                 trading_logger.error(f"交易会话错误: {str(e)}")

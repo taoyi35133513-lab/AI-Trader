@@ -135,6 +135,20 @@ class AgentService:
 
         return agents
 
+    @staticmethod
+    def _get_live_agent_name(agent_name: str, market: str) -> str:
+        """从 backtest agent name 推算对应的 live agent name。
+
+        Naming convention (see trading_mode.py):
+          backtest daily:  {model}            → live: {model}-live
+          backtest hourly: {model}-astock-hour → live: {model}-live-astock-hour
+        """
+        is_hourly = market == "cn_hour"
+        if is_hourly and agent_name.endswith("-astock-hour"):
+            base = agent_name[: -len("-astock-hour")]
+            return f"{base}-live-astock-hour"
+        return f"{agent_name}-live"
+
     def get_agent_positions(
         self,
         agent_name: str,
@@ -145,6 +159,7 @@ class AgentService:
         """获取 Agent 持仓历史
 
         优先从 DuckDB 读取，如果数据为空则降级到 JSONL 文件。
+        自动合并对应的 live agent 数据（如果存在），保证 backtest + live 时间线连续。
 
         Args:
             agent_name: Agent 名称
@@ -170,7 +185,24 @@ class AgentService:
             logger.warning(f"DuckDB position query failed: {e}")
 
         # 降级到 JSONL 文件
-        return self._get_positions_from_jsonl(agent_name, market, start_date, end_date)
+        positions = self._get_positions_from_jsonl(agent_name, market, start_date, end_date)
+
+        # 合并 live agent 数据（如果存在）
+        # 只取 backtest 最后日期之后的 live 记录，避免初始化记录导致的重叠和资产值跳变
+        live_name = self._get_live_agent_name(agent_name, market)
+        live_positions = self._get_positions_from_jsonl(live_name, market, start_date, end_date)
+        if live_positions and positions:
+            last_backtest_date = max(p.get("date", "") for p in positions)
+            live_positions = [p for p in live_positions if p.get("date", "") > last_backtest_date]
+        if live_positions:
+            positions = positions + live_positions
+            positions.sort(key=lambda p: p.get("date", ""))
+            logger.debug(
+                f"Merged {len(live_positions)} live positions from {live_name} "
+                f"into {agent_name} (total: {len(positions)})"
+            )
+
+        return positions
 
     def _get_positions_from_jsonl(
         self,
@@ -269,21 +301,25 @@ class AgentService:
         sorted_pos_dates = sorted(positions_by_date.keys())
 
         # Get all trading dates from price data to fill gaps between position records.
+        # Only fill gaps up to the last actual position date — do not extrapolate
+        # beyond the last trade (otherwise carry-forward creates phantom data points
+        # when real-time price data extends beyond the agent's last trading date).
         all_trading_dates = sorted_pos_dates
         if len(sorted_pos_dates) >= 1:
             first_date = sorted_pos_dates[0]
+            last_date = sorted_pos_dates[-1]
             try:
                 if market == "cn_hour":
                     rows = self.conn.execute(
                         "SELECT DISTINCT trade_time FROM stock_hourly_prices "
-                        "WHERE trade_time >= ? ORDER BY trade_time",
-                        [first_date],
+                        "WHERE trade_time >= ? AND trade_time <= ? ORDER BY trade_time",
+                        [first_date, last_date],
                     ).fetchall()
                 else:
                     rows = self.conn.execute(
                         "SELECT DISTINCT trade_date FROM stock_daily_prices "
-                        "WHERE trade_date >= ? ORDER BY trade_date",
-                        [first_date],
+                        "WHERE trade_date >= ? AND trade_date <= ? ORDER BY trade_date",
+                        [first_date, last_date],
                     ).fetchall()
                 if rows:
                     # Convert to string for consistent comparison

@@ -363,6 +363,7 @@ class BaseAgentAStock:
                         agent_name=self.signature,
                         market=self.market,
                         session_timestamp=timestamp,
+                        system_prompt=getattr(self, '_current_system_prompt', None),
                     )
                     self._current_session_timestamp = timestamp
 
@@ -423,10 +424,11 @@ class BaseAgentAStock:
         log_file = self._setup_logging(today_date)
 
         # Update system prompt - 使用A股专用提示词
+        self._current_system_prompt = get_agent_system_prompt_astock(today_date, self.signature, self.stock_symbols)
         self.agent = create_agent(
             self.model,
             tools=self.tools,
-            system_prompt=get_agent_system_prompt_astock(today_date, self.signature, self.stock_symbols),
+            system_prompt=self._current_system_prompt,
         )
 
         # Initial user query
@@ -527,8 +529,11 @@ class BaseAgentAStock:
                     # Fallback: keep original if unexpected
                     pass
 
-        with open(self.position_file, "w") as f:  # Use "w" mode to ensure creating new file
-            f.write(json.dumps({"date": init_date_str, "id": 0, "positions": init_position}) + "\n")
+        # Write initial position to both JSONL and DuckDB
+        from tools.data_access import PositionDataAccess
+        pos_access = PositionDataAccess()
+        init_action = {"action": "init", "symbol": "", "amount": 0}
+        pos_access.add_position_record(init_date_str, self.signature, init_action, init_position)
 
         logger.info("A-shares agent %s registered: position=%s, cash=%.2f, stocks=%d",
                     self.signature, self.position_file, self.initial_cash, len(self.stock_symbols))
