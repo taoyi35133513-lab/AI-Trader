@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/styles.css?v=10.0">
+    <link rel="stylesheet" href="assets/css/styles.css?v=12.0">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -111,6 +111,10 @@
                         <input type="date" id="actionEndDate" class="date-input" title="End date">
                         <button id="actionDateReset" class="date-reset-btn" title="Reset dates">×</button>
                     </div>
+                    <label class="action-checkbox-label" title="Hide sessions with no trades">
+                        <input type="checkbox" id="hideNoTrade">
+                        <span>Hide no-trade</span>
+                    </label>
                     <div class="search-box">
                         <input type="text" id="actionSearch" class="search-input" placeholder="Search symbol or agent...">
                         <span class="search-icon">🔍</span>
@@ -137,13 +141,29 @@
         </button>
     </main>
 
+    <!-- Prompt Modal -->
+    <div class="prompt-modal-overlay" id="promptModalOverlay">
+        <div class="prompt-modal">
+            <div class="prompt-modal-header">
+                <span class="prompt-modal-title" id="promptModalTitle">System Prompt</span>
+                <button class="prompt-modal-close" id="promptModalClose">&times;</button>
+            </div>
+            <div class="prompt-modal-body" id="promptModalBody">
+                <!-- Populated by JS -->
+            </div>
+            <div class="prompt-modal-footer">
+                <span class="prompt-modal-date" id="promptModalDate"></span>
+            </div>
+        </div>
+    </div>
+
     <footer class="footer">
         <p>AI-Trader &copy; 2025 | AI-Powered Trading Agent Benchmark</p>
     </footer>
 
     <script src="assets/js/config-loader.js?v=18.0"></script>
     <script src="assets/js/data-loader.js?v=20.0"></script>
-    <script src="assets/js/transaction-loader.js?v=15.0"></script>
-    <script src="assets/js/asset-chart.js?v=24.0"></script>
+    <script src="assets/js/transaction-loader.js?v=18.0"></script>
+    <script src="assets/js/asset-chart.js?v=26.0"></script>
 </body>
 </html>

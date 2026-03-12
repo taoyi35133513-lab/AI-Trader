@@ -11,9 +11,18 @@ class ConfigLoader {
     // Get API base URL from URL parameter or default
     _getApiBaseUrl() {
         const urlParams = new URLSearchParams(window.location.search);
-        // With Nginx reverse proxy, use relative path (same origin).
-        // Override with ?api=http://host:port for direct backend access.
-        return urlParams.get('api') || '';
+        // Override with ?api=http://host:port for custom backend access.
+        // Default: if served from same port as API (e.g. Nginx proxy), use relative path;
+        // otherwise fall back to localhost:8888 (dev mode).
+        if (urlParams.get('api')) {
+            return urlParams.get('api');
+        }
+        // If current origin is the API port, use relative path (Nginx proxy)
+        if (window.location.port === '8888') {
+            return '';
+        }
+        // Dev mode: frontend on different port, API on 8888
+        return `${window.location.protocol}//${window.location.hostname}:8888`;
     }
 
     // Load configuration from API

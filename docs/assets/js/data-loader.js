@@ -309,6 +309,12 @@ class DataLoader {
                 const lastKey = matchingKeys.sort().pop();
                 return extractPrice(prices[lastKey]);
             }
+
+            // Fallback: use the latest available price on or before the requested date
+            const allKeys = Object.keys(prices).filter(key => key <= dateOrTimestamp).sort();
+            if (allKeys.length > 0) {
+                return extractPrice(prices[allKeys[allKeys.length - 1]]);
+            }
         }
 
         return null;

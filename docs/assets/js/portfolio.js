@@ -5,6 +5,7 @@ const dataLoader = new DataLoader();
 let allAgentsData = {};
 let currentAgent = null;
 let allocationChart = null;
+let stockNameMap = {};
 
 // Store data for search functionality
 let currentHoldingsData = [];
@@ -59,6 +60,15 @@ async function init() {
 
     // Load config first to determine enabled markets
     await window.configLoader.loadConfig();
+
+    // Load stock name map
+    try {
+        const apiBase = window.configLoader.getApiBaseUrl();
+        const resp = await fetch(`${apiBase}/api/prices/stock-names`);
+        if (resp.ok) stockNameMap = await resp.json();
+    } catch (e) {
+        console.warn('Failed to load stock names:', e);
+    }
 
     // Default to CN daily market
     dataLoader.setMarket('cn');
@@ -313,9 +323,10 @@ function renderHoldingsTable(holdingsData, totalValue) {
     // Create table rows for stocks
     stockHoldings.forEach(holding => {
         const weight = (holding.marketValue / totalValue * 100).toFixed(2);
+        const name = stockNameMap[holding.symbol] || '';
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td class="symbol">${holding.symbol}</td>
+            <td class="symbol">${holding.symbol}${name ? ' <span style="color: var(--text-muted); font-size: 0.85em;">' + name + '</span>' : ''}</td>
             <td>${holding.shares}</td>
             <td>${dataLoader.formatCurrency(holding.price || 0)}</td>
             <td>${dataLoader.formatCurrency(holding.marketValue)}</td>
@@ -430,6 +441,21 @@ async function updateAllocationChart(agentName) {
                         padding: 15,
                         font: {
                             size: 12
+                        },
+                        generateLabels: function(chart) {
+                            const data = chart.data;
+                            return data.labels.map((label, i) => {
+                                const name = stockNameMap[label];
+                                return {
+                                    text: name ? `${label} ${name}` : label,
+                                    fontColor: '#9AA0A6',
+                                    fillStyle: data.datasets[0].backgroundColor[i],
+                                    strokeStyle: data.datasets[0].borderColor,
+                                    lineWidth: data.datasets[0].borderWidth,
+                                    hidden: !chart.getDataVisibility(i),
+                                    index: i
+                                };
+                            });
                         }
                     }
                 },
@@ -441,12 +467,16 @@ async function updateAllocationChart(agentName) {
                     borderWidth: 1,
                     padding: 12,
                     callbacks: {
+                        title: function(tooltipItems) {
+                            const symbol = tooltipItems[0]?.label || '';
+                            const name = stockNameMap[symbol];
+                            return name ? `${symbol} ${name}` : symbol;
+                        },
                         label: function(context) {
-                            const label = context.label || '';
                             const value = dataLoader.formatCurrency(context.parsed);
                             const total = context.dataset.data.reduce((sum, v) => sum + v, 0);
                             const percentage = ((context.parsed / total) * 100).toFixed(1);
-                            return `${label}: ${value} (${percentage}%)`;
+                            return `${value} (${percentage}%)`;
                         }
                     }
                 }

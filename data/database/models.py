@@ -76,7 +76,7 @@ TABLE_DEFINITIONS: Dict[str, str] = {
             id INTEGER PRIMARY KEY,
             agent_name VARCHAR(50) NOT NULL,
             market VARCHAR(10) NOT NULL,
-            trade_date DATE NOT NULL,
+            trade_date VARCHAR(30) NOT NULL,
             step_id INTEGER,
             ts_code VARCHAR(20),
             quantity INTEGER,
@@ -111,6 +111,7 @@ TABLE_DEFINITIONS: Dict[str, str] = {
             session_date DATE NOT NULL,
             session_time TIME,
             session_timestamp TIMESTAMP NOT NULL,
+            system_prompt TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (agent_name, session_timestamp)
         )
@@ -160,6 +161,27 @@ TABLE_DEFINITIONS: Dict[str, str] = {
             FOREIGN KEY (position_history_id) REFERENCES agent_positions_history(id)
         )
     """,
+
+    "trade_comments": """
+        CREATE TABLE IF NOT EXISTS trade_comments (
+            id INTEGER DEFAULT nextval('trade_comments_id_seq') PRIMARY KEY,
+            agent_name VARCHAR NOT NULL,
+            market VARCHAR NOT NULL DEFAULT 'cn',
+            trade_date VARCHAR(30) NOT NULL,
+            ts_code VARCHAR(20) NOT NULL,
+            action VARCHAR(10) NOT NULL,
+            comment_text TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
+}
+
+# 表创建前需要先创建的序列（用于自增主键）
+SEQUENCE_DEFINITIONS: Dict[str, list] = {
+    "trade_comments": [
+        "CREATE SEQUENCE IF NOT EXISTS trade_comments_id_seq START 1",
+    ],
 }
 
 # 索引定义
@@ -219,6 +241,12 @@ INDEX_DEFINITIONS: Dict[str, list] = {
         "CREATE INDEX IF NOT EXISTS idx_holdings_pos ON agent_position_holdings(position_history_id)",
         "CREATE INDEX IF NOT EXISTS idx_holdings_symbol ON agent_position_holdings(ts_code)",
     ],
+
+    "trade_comments": [
+        "CREATE INDEX IF NOT EXISTS idx_comments_agent ON trade_comments(agent_name)",
+        "CREATE INDEX IF NOT EXISTS idx_comments_date ON trade_comments(trade_date)",
+        "CREATE INDEX IF NOT EXISTS idx_comments_agent_market ON trade_comments(agent_name, market)",
+    ],
 }
 
 
@@ -238,6 +266,11 @@ def create_table(table_name: str) -> bool:
     conn = get_connection()
 
     try:
+        # 创建前置序列（如果有）
+        if table_name in SEQUENCE_DEFINITIONS:
+            for seq_sql in SEQUENCE_DEFINITIONS[table_name]:
+                conn.execute(seq_sql)
+
         # 创建表
         conn.execute(TABLE_DEFINITIONS[table_name])
         logger.info(f"表 {table_name} 创建成功")

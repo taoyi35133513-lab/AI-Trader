@@ -208,20 +208,21 @@ function updateStats() {
     const actualAgentCount = agentNames.filter(n => !isBenchmarkName(n)).length;
     document.getElementById('agent-count').textContent = actualAgentCount;
 
-    // Format date range - uniform format for both markets
-    const formatDateRange = (dateStr) => {
-        if (!dateStr) return 'N/A';
-        // Parse date string (handles both "2025-10-01" and "2025-10-01 10:00:00" formats)
-        const date = new Date(dateStr);
-        return date.toLocaleString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric'
-        });
+    // Format date range - compact single-line display
+    const formatTradingPeriod = (startStr, endStr) => {
+        if (!startStr || !endStr) return 'N/A';
+        const s = new Date(startStr), e = new Date(endStr);
+        const sMonth = s.toLocaleString('en-US', { month: 'short' });
+        const eMonth = e.toLocaleString('en-US', { month: 'short' });
+        // Same year: "Feb 25 – Mar 12, 2026"; different year: "Dec 1, 2025 – Jan 5, 2026"
+        if (s.getFullYear() === e.getFullYear()) {
+            return `${sMonth} ${s.getDate()} – ${eMonth} ${e.getDate()}, ${e.getFullYear()}`;
+        }
+        return `${sMonth} ${s.getDate()}, ${s.getFullYear()} – ${eMonth} ${e.getDate()}, ${e.getFullYear()}`;
     };
 
-    document.getElementById('trading-period').textContent = minDate && maxDate ?
-        `${formatDateRange(minDate)} to ${formatDateRange(maxDate)}` : 'N/A';
+    document.getElementById('trading-period').textContent =
+        formatTradingPeriod(minDate, maxDate);
     document.getElementById('best-performer').textContent = bestAgent ?
         dataLoader.getAgentDisplayName(bestAgent) : 'N/A';
     document.getElementById('avg-return').textContent = bestAgent ?
@@ -879,14 +880,75 @@ async function createLeaderboard() {
             </div>
         `;
 
+        // Click to show prompt modal
+        itemEl.addEventListener('click', () => showPromptModal(item.agentName, item.displayName));
         container.appendChild(itemEl);
     });
 }
 
+// Prompt modal: fetch and display agent's latest system prompt
+async function showPromptModal(agentName, displayName) {
+    const overlay = document.getElementById('promptModalOverlay');
+    const title = document.getElementById('promptModalTitle');
+    const body = document.getElementById('promptModalBody');
+    const dateEl = document.getElementById('promptModalDate');
+
+    title.textContent = displayName + ' — System Prompt';
+    body.textContent = 'Loading...';
+    dateEl.textContent = '';
+    overlay.classList.add('active');
+
+    try {
+        const apiBase = window.configLoader.getApiBaseUrl();
+        const market = window.dataLoader ? window.dataLoader.getMarket() : 'cn';
+        // Try live agent name first (with -live suffix), then backtest name
+        const liveAgent = market === 'cn_hour'
+            ? agentName.replace(/-astock-hour$/, '') + '-live-astock-hour'
+            : agentName + '-live';
+
+        let data = null;
+        for (const name of [liveAgent, agentName]) {
+            try {
+                const resp = await fetch(apiBase + '/api/logs/' + encodeURIComponent(name) + '/latest-prompt?market=' + (market === 'cn_hour' ? 'cn' : market));
+                if (resp.ok) {
+                    data = await resp.json();
+                    break;
+                }
+            } catch (e) { /* try next */ }
+        }
+
+        if (data && data.system_prompt) {
+            body.innerHTML = formatThinking(data.system_prompt);
+            const dateStr = data.session_time
+                ? data.session_date + ' ' + data.session_time
+                : data.session_date;
+            dateEl.textContent = 'Session: ' + dateStr;
+        } else {
+            body.textContent = '暂无 prompt 数据。下次交易执行后将自动记录。';
+        }
+    } catch (error) {
+        body.textContent = '加载失败: ' + error.message;
+    }
+}
+
+// Close prompt modal
+document.addEventListener('DOMContentLoaded', function() {
+    const overlay = document.getElementById('promptModalOverlay');
+    const closeBtn = document.getElementById('promptModalClose');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', function() { overlay.classList.remove('active'); });
+    }
+    if (overlay) {
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) overlay.classList.remove('active');
+        });
+    }
+});
+
 // Create action flow with pagination
 let actionFlowState = {
-    allTransactions: [],      // All unfiltered transactions
-    filteredTransactions: [], // Filtered transactions to display
+    allTransactions: [],      // All entries (including no_trade)
+    filteredTransactions: [], // Filtered/grouped transactions to display
     loadedCount: 0,
     pageSize: 20,
     maxTransactions: 100,
@@ -896,16 +958,23 @@ let actionFlowState = {
     // Filter state
     searchQuery: '',
     startDate: null,
-    endDate: null
+    endDate: null,
+    hideNoTrade: false         // Show no-trade entries by default
 };
 
 async function createActionFlow() {
-    // Load all transactions
-    await window.transactionLoader.loadAllTransactions();
-    actionFlowState.allTransactions = window.transactionLoader.getMostRecentTransactions(500); // Load more for filtering
+    // Load all entries (including no_trade) for the action flow
+    await window.transactionLoader.loadAllEntries();
+    actionFlowState.allTransactions = window.transactionLoader.allEntries.slice(0, 500);
     actionFlowState.container = document.getElementById('actionList');
     actionFlowState.container.innerHTML = '';
     actionFlowState.loadedCount = 0;
+
+    // Sync checkbox state
+    const hideCheckbox = document.getElementById('hideNoTrade');
+    if (hideCheckbox) {
+        actionFlowState.hideNoTrade = hideCheckbox.checked;
+    }
 
     // Initialize date picker constraints
     initActionDatePickers();
@@ -990,6 +1059,39 @@ function setupActionFilterListeners() {
             applyActionFilters();
         });
     }
+
+    const hideNoTradeCheckbox = document.getElementById('hideNoTrade');
+    if (hideNoTradeCheckbox) {
+        hideNoTradeCheckbox.addEventListener('change', (e) => {
+            actionFlowState.hideNoTrade = e.target.checked;
+            applyActionFilters();
+        });
+    }
+}
+
+// Group flat entries by agent + date into grouped objects
+function groupTransactions(entries) {
+    const map = new Map();
+    for (const t of entries) {
+        const key = `${t.agentFolder}|||${t.date}`;
+        if (!map.has(key)) {
+            map.set(key, { agentFolder: t.agentFolder, date: t.date, trades: [] });
+        }
+        // Only add actual trades (not no_trade) to the trades list
+        if (t.action && t.action !== 'no_trade' && t.action !== 'initial' && t.amount > 0 && t.symbol) {
+            map.get(key).trades.push({ action: t.action, symbol: t.symbol, amount: t.amount });
+        }
+    }
+    return Array.from(map.values());
+}
+
+// Build Tencent Finance URL from A-share symbol
+function buildStockUrl(symbol) {
+    if (!symbol || !symbol.includes('.')) return null;
+    const [code, suffix] = symbol.split('.');
+    const exchange = suffix === 'SH' ? 'sh' : suffix === 'SZ' ? 'sz' : null;
+    if (!exchange) return null;
+    return `https://stockapp.finance.qq.com/mstats/#/detail/${exchange}/${code}`;
 }
 
 // Apply filters and refresh the action list
@@ -1020,8 +1122,15 @@ function applyActionFilters() {
         });
     }
 
-    // Store filtered transactions
-    actionFlowState.filteredTransactions = filtered.slice(0, actionFlowState.maxTransactions);
+    // Group by agent + date
+    let groups = groupTransactions(filtered);
+
+    // Optionally hide no-trade groups
+    if (actionFlowState.hideNoTrade) {
+        groups = groups.filter(g => g.trades.length > 0);
+    }
+
+    actionFlowState.filteredTransactions = groups.slice(0, actionFlowState.maxTransactions);
 
     // Preserve container height to prevent layout shift
     const currentHeight = actionFlowState.container.offsetHeight;
@@ -1049,9 +1158,9 @@ function applyActionFilters() {
 async function loadMoreTransactions() {
     if (actionFlowState.isLoading) return;
 
-    // Use filtered transactions
-    const transactions = actionFlowState.filteredTransactions;
-    if (actionFlowState.loadedCount >= transactions.length) return;
+    // Use filtered (grouped) transactions
+    const groups = actionFlowState.filteredTransactions;
+    if (actionFlowState.loadedCount >= groups.length) return;
     if (actionFlowState.loadedCount >= actionFlowState.maxTransactions) return;
 
     actionFlowState.isLoading = true;
@@ -1063,12 +1172,12 @@ async function loadMoreTransactions() {
     const startIndex = actionFlowState.loadedCount;
     const endIndex = Math.min(
         startIndex + actionFlowState.pageSize,
-        transactions.length,
+        groups.length,
         actionFlowState.maxTransactions
     );
 
     // Handle empty results
-    if (transactions.length === 0) {
+    if (groups.length === 0) {
         actionFlowState.isLoading = false;
         hideLoadingIndicator();
         showNoResultsMessage();
@@ -1077,24 +1186,39 @@ async function loadMoreTransactions() {
 
     // Load this batch
     for (let i = startIndex; i < endIndex; i++) {
-        const transaction = transactions[i];
-        const agentName = transaction.agentFolder;
+        const group = groups[i];
+        const agentName = group.agentFolder;
         const currentMarket = dataLoader.getMarket();
         const displayName = window.configLoader.getDisplayName(agentName, currentMarket);
         const icon = window.configLoader.getIcon(agentName, currentMarket);
-        const actionClass = transaction.action;
 
-        // Load agent's thinking
-        const thinking = await window.transactionLoader.loadAgentThinking(agentName, transaction.date, currentMarket);
+        // Load agent's thinking (once per group)
+        const thinking = await window.transactionLoader.loadAgentThinking(agentName, group.date, currentMarket);
 
         const cardEl = document.createElement('div');
         cardEl.className = 'action-card' + (actionFlowState.isFiltering ? ' no-animation' : '');
-        // Only add animation delay when not filtering
         if (!actionFlowState.isFiltering) {
             cardEl.style.animationDelay = `${(i % actionFlowState.pageSize) * 0.03}s`;
         }
 
-        // Build card HTML - only include reasoning section if thinking is available
+        // Build trades list HTML
+        let tradesHTML;
+        if (group.trades.length > 0) {
+            tradesHTML = group.trades.map(t => {
+                const stockUrl = buildStockUrl(t.symbol);
+                const symbolHTML = stockUrl
+                    ? `<a class="action-symbol" href="${stockUrl}" target="_blank" rel="noopener">${t.symbol}</a>`
+                    : `<span class="action-symbol">${t.symbol}</span>`;
+                return `<div class="action-trade-item">
+                    <span class="action-type ${t.action}">${t.action}</span>
+                    ${symbolHTML}
+                    <span>&times;${t.amount}</span>
+                </div>`;
+            }).join('');
+        } else {
+            tradesHTML = `<div class="action-trade-item action-no-trade"><span class="action-type no-trade">no trade</span></div>`;
+        }
+
         let cardHTML = `
             <div class="action-header">
                 <div class="action-agent-icon">
@@ -1102,17 +1226,19 @@ async function loadMoreTransactions() {
                 </div>
                 <div class="action-meta">
                     <div class="action-agent-name">${displayName}</div>
-                    <div class="action-details">
-                        <span class="action-type ${actionClass}">${transaction.action}</span>
-                        <span class="action-symbol">${transaction.symbol}</span>
-                        <span>×${transaction.amount}</span>
-                    </div>
                 </div>
-                <div class="action-timestamp">${window.transactionLoader.formatDateTime(transaction.date)}</div>
+                <div class="action-timestamp">${window.transactionLoader.formatDateTime(group.date)}</div>
+                <button class="action-comment-btn" title="Add comment"
+                    data-agent="${agentName}"
+                    data-date="${group.date}">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                </button>
             </div>
+            <div class="action-trades-list">${tradesHTML}</div>
         `;
 
-        // Only add reasoning section if thinking is available
         if (thinking !== null) {
             cardHTML += `
             <div class="action-body">
@@ -1129,13 +1255,9 @@ async function loadMoreTransactions() {
 
         // Remove the status note and loading indicator before adding new cards
         const existingNote = actionFlowState.container.querySelector('.transactions-status-note');
-        if (existingNote) {
-            existingNote.remove();
-        }
+        if (existingNote) existingNote.remove();
         const existingLoader = actionFlowState.container.querySelector('.transactions-loading');
-        if (existingLoader) {
-            existingLoader.remove();
-        }
+        if (existingLoader) existingLoader.remove();
 
         actionFlowState.container.appendChild(cardEl);
     }
@@ -1146,6 +1268,9 @@ async function loadMoreTransactions() {
     // Hide loading indicator and add status note
     hideLoadingIndicator();
     updateStatusNote();
+
+    // Load comment states for newly added cards
+    refreshCommentButtons();
 }
 
 function showLoadingIndicator() {
@@ -1323,6 +1448,325 @@ function showLoading() {
 function hideLoading() {
     document.getElementById('loadingOverlay').classList.add('hidden');
 }
+
+// ====================================================
+// Trade Comments
+// ====================================================
+
+function getCommentApiBase() {
+    return window.configLoader.getApiBaseUrl();
+}
+
+// Cache of loaded comments per agent: { agentName: [commentObj, ...] }
+let _commentCache = {};
+let _commentCacheTime = 0;
+const COMMENT_CACHE_TTL = 30000; // 30s
+
+// Load all comments for visible agents in a single batch, then update buttons
+async function refreshCommentButtons() {
+    const buttons = document.querySelectorAll('.action-comment-btn');
+    if (buttons.length === 0) return;
+
+    // Collect unique agent names
+    const agents = new Set();
+    buttons.forEach(btn => agents.add(btn.dataset.agent));
+
+    const now = Date.now();
+    const needsRefresh = now - _commentCacheTime > COMMENT_CACHE_TTL;
+
+    if (needsRefresh) {
+        const apiBase = getCommentApiBase();
+        // Fetch comments per agent (one request per unique agent, not per button)
+        const fetches = [...agents].map(async (agent) => {
+            try {
+                const resp = await fetch(`${apiBase}/api/trade-comments/${encodeURIComponent(agent)}?limit=200`);
+                if (resp.ok) {
+                    _commentCache[agent] = await resp.json();
+                } else {
+                    _commentCache[agent] = [];
+                }
+            } catch (e) {
+                _commentCache[agent] = [];
+            }
+        });
+        await Promise.all(fetches);
+        _commentCacheTime = now;
+    }
+
+    // Update button states from cache — match by (agent, date) only
+    buttons.forEach(btn => {
+        const agent = btn.dataset.agent;
+        const date = btn.dataset.date;
+        const agentComments = _commentCache[agent] || [];
+        const matches = agentComments.filter(c => c.trade_date === date);
+        if (matches.length > 0) {
+            btn.classList.add('has-comments');
+            let badge = btn.querySelector('.comment-count-badge');
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'comment-count-badge';
+                btn.appendChild(badge);
+            }
+            badge.textContent = matches.length;
+        } else {
+            btn.classList.remove('has-comments');
+            const badge = btn.querySelector('.comment-count-badge');
+            if (badge) badge.remove();
+        }
+    });
+}
+
+// Invalidate cache so next refresh fetches fresh data
+function invalidateCommentCache() {
+    _commentCacheTime = 0;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Build modal DOM safely using DOM APIs
+function buildCommentModal(agentName, tradeDate) {
+    const overlay = document.createElement('div');
+    overlay.className = 'comment-modal-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'comment-modal';
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'comment-modal-header';
+    const headerLeft = document.createElement('div');
+    const h4 = document.createElement('h4');
+    h4.textContent = 'Trade Comments';
+    const info = document.createElement('div');
+    info.className = 'comment-modal-trade-info';
+    info.textContent = `${agentName} — ${tradeDate}`;
+    headerLeft.appendChild(h4);
+    headerLeft.appendChild(info);
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'comment-modal-close';
+    closeBtn.textContent = '\u00d7';
+    header.appendChild(headerLeft);
+    header.appendChild(closeBtn);
+
+    // Body
+    const body = document.createElement('div');
+    body.className = 'comment-modal-body';
+    const emptyMsg = document.createElement('div');
+    emptyMsg.className = 'comment-list-empty';
+    emptyMsg.textContent = 'Loading...';
+    body.appendChild(emptyMsg);
+
+    // Footer
+    const footer = document.createElement('div');
+    footer.className = 'comment-modal-footer';
+    const inputArea = document.createElement('div');
+    inputArea.className = 'comment-input-area';
+    const textarea = document.createElement('textarea');
+    textarea.className = 'comment-textarea';
+    textarea.placeholder = 'Write your comment...';
+    textarea.rows = 3;
+    const btnRow = document.createElement('div');
+    btnRow.className = 'comment-btn-row';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'comment-btn comment-btn-cancel';
+    cancelBtn.textContent = 'Cancel';
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'comment-btn comment-btn-save';
+    saveBtn.textContent = 'Save';
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(saveBtn);
+    inputArea.appendChild(textarea);
+    inputArea.appendChild(btnRow);
+    footer.appendChild(inputArea);
+
+    modal.appendChild(header);
+    modal.appendChild(body);
+    modal.appendChild(footer);
+    overlay.appendChild(modal);
+
+    return { overlay, body, textarea, saveBtn, cancelBtn, closeBtn };
+}
+
+// Open comment modal — keyed by (agent, date)
+async function openCommentModal(agentName, tradeDate) {
+    const existing = document.querySelector('.comment-modal-overlay');
+    if (existing) existing.remove();
+
+    const { overlay, body, textarea, saveBtn, cancelBtn, closeBtn } = buildCommentModal(agentName, tradeDate);
+    document.body.appendChild(overlay);
+
+    // Close handlers
+    closeBtn.addEventListener('click', () => overlay.remove());
+    cancelBtn.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
+
+    // Load existing comments
+    await renderCommentList(body, agentName, tradeDate);
+
+    // Save handler
+    saveBtn.addEventListener('click', async () => {
+        const text = textarea.value.trim();
+        if (!text) return;
+        saveBtn.disabled = true;
+        try {
+            const apiBase = getCommentApiBase();
+            const resp = await fetch(`${apiBase}/api/trade-comments/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    agent_name: agentName,
+                    market: dataLoader.getMarket() === 'cn_hour' ? 'cn' : dataLoader.getMarket(),
+                    trade_date: tradeDate,
+                    ts_code: '',
+                    action: '',
+                    comment_text: text,
+                }),
+            });
+            if (resp.ok) {
+                textarea.value = '';
+                await renderCommentList(body, agentName, tradeDate);
+                invalidateCommentCache();
+                refreshCommentButtons();
+            }
+        } finally {
+            saveBtn.disabled = false;
+        }
+    });
+}
+
+function createCommentItemElement(c, container, agentName, tradeDate) {
+    const item = document.createElement('div');
+    item.className = 'comment-item';
+    item.dataset.commentId = c.id;
+
+    const itemHeader = document.createElement('div');
+    itemHeader.className = 'comment-item-header';
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'comment-item-time';
+    timeSpan.textContent = new Date(c.created_at).toLocaleString();
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'comment-item-actions';
+    const editBtn = document.createElement('button');
+    editBtn.className = 'edit-btn';
+    editBtn.textContent = 'Edit';
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'delete-btn';
+    deleteBtn.textContent = 'Delete';
+    actionsDiv.appendChild(editBtn);
+    actionsDiv.appendChild(deleteBtn);
+    itemHeader.appendChild(timeSpan);
+    itemHeader.appendChild(actionsDiv);
+
+    const textEl = document.createElement('div');
+    textEl.className = 'comment-item-text';
+    textEl.textContent = c.comment_text;
+
+    item.appendChild(itemHeader);
+    item.appendChild(textEl);
+
+    // Edit handler
+    editBtn.addEventListener('click', () => {
+        const currentText = textEl.textContent;
+        textEl.textContent = '';
+        const editArea = document.createElement('textarea');
+        editArea.className = 'comment-textarea comment-edit-textarea';
+        editArea.value = currentText;
+        const editBtnRow = document.createElement('div');
+        editBtnRow.className = 'comment-btn-row';
+        editBtnRow.style.marginTop = '0.5rem';
+        const editCancel = document.createElement('button');
+        editCancel.className = 'comment-btn comment-btn-cancel';
+        editCancel.textContent = 'Cancel';
+        const editSave = document.createElement('button');
+        editSave.className = 'comment-btn comment-btn-save';
+        editSave.textContent = 'Save';
+        editBtnRow.appendChild(editCancel);
+        editBtnRow.appendChild(editSave);
+        textEl.appendChild(editArea);
+        textEl.appendChild(editBtnRow);
+
+        editCancel.addEventListener('click', () => {
+            textEl.textContent = currentText;
+        });
+        editSave.addEventListener('click', async () => {
+            const newText = editArea.value.trim();
+            if (!newText) return;
+            const apiBase = getCommentApiBase();
+            const resp = await fetch(`${apiBase}/api/trade-comments/${c.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ comment_text: newText }),
+            });
+            if (resp.ok) {
+                await renderCommentList(container, agentName, tradeDate);
+                invalidateCommentCache();
+                refreshCommentButtons();
+            }
+        });
+    });
+
+    // Delete handler
+    deleteBtn.addEventListener('click', async () => {
+        if (!confirm('Delete this comment?')) return;
+        const apiBase = getCommentApiBase();
+        const resp = await fetch(`${apiBase}/api/trade-comments/${c.id}`, { method: 'DELETE' });
+        if (resp.ok) {
+            await renderCommentList(container, agentName, tradeDate);
+            invalidateCommentCache();
+            refreshCommentButtons();
+        }
+    });
+
+    return item;
+}
+
+async function renderCommentList(container, agentName, tradeDate) {
+    const apiBase = getCommentApiBase();
+    const params = new URLSearchParams({ trade_date: tradeDate });
+    try {
+        const resp = await fetch(`${apiBase}/api/trade-comments/${encodeURIComponent(agentName)}?${params}&limit=200`);
+        if (!resp.ok) {
+            container.textContent = '';
+            const msg = document.createElement('div');
+            msg.className = 'comment-list-empty';
+            msg.textContent = 'Failed to load comments';
+            container.appendChild(msg);
+            return;
+        }
+        const comments = await resp.json();
+        container.textContent = '';
+        if (comments.length === 0) {
+            const msg = document.createElement('div');
+            msg.className = 'comment-list-empty';
+            msg.textContent = 'No comments yet';
+            container.appendChild(msg);
+            return;
+        }
+        comments.forEach(c => {
+            container.appendChild(createCommentItemElement(c, container, agentName, tradeDate));
+        });
+    } catch (e) {
+        container.textContent = '';
+        const msg = document.createElement('div');
+        msg.className = 'comment-list-empty';
+        msg.textContent = 'Failed to load comments';
+        container.appendChild(msg);
+    }
+}
+
+// Delegate click on comment buttons
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.action-comment-btn');
+    if (!btn) return;
+    e.stopPropagation();
+    openCommentModal(btn.dataset.agent, btn.dataset.date);
+});
 
 // Initialize on page load
 window.addEventListener('DOMContentLoaded', init);

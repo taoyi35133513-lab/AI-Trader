@@ -4,10 +4,11 @@
 class TransactionLoader {
     constructor() {
         this.allTransactions = [];
+        this.allEntries = [];
         this.leaderboardData = [];
     }
 
-    // Load all transactions from all agents
+    // Load all transactions from all agents (trades only)
     async loadAllTransactions() {
         const config = window.configLoader;
         const dataLoader = window.dataLoader;
@@ -29,24 +30,76 @@ class TransactionLoader {
         return this.allTransactions;
     }
 
-    // Load transactions for a single agent
+    // Load ALL entries from all agents (including no_trade)
+    async loadAllEntries() {
+        const config = window.configLoader;
+        const dataLoader = window.dataLoader;
+        const currentMarket = dataLoader.getMarket();
+        const agents = config.getEnabledAgents(currentMarket);
+
+        const promises = agents.map(agent => this.loadAgentEntries(agent.folder, currentMarket));
+        const results = await Promise.all(promises);
+
+        this.allEntries = results
+            .flat()
+            .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        console.log(`[TransactionLoader] Loaded ${this.allEntries.length} total entries (incl. no_trade)`);
+
+        return this.allEntries;
+    }
+
+    // Load transactions for a single agent (trades only)
     async loadAgentTransactions(agentFolder, market = 'us') {
+        const all = await this.loadAgentEntries(agentFolder, market);
+        return all.filter(t => {
+            if (!t.action || t.action === 'initial' || t.action === 'no_trade') return false;
+            if (!t.amount || t.amount === 0) return false;
+            if (!t.symbol || t.symbol === '') return false;
+            return true;
+        });
+    }
+
+    // Load ALL position entries for a single agent (including no_trade)
+    // Also merges entries from the corresponding -live folder if it exists
+    async loadAgentEntries(agentFolder, market = 'us') {
+        const marketConfig = window.configLoader.getMarketConfig(market);
+        const agentDataDir = marketConfig ? marketConfig.data_dir : 'agent_data';
+
+        // Determine live folder name
+        const isHourly = market === 'cn_hour';
+        let liveFolder;
+        if (isHourly && agentFolder.endsWith('-astock-hour')) {
+            const base = agentFolder.slice(0, -'-astock-hour'.length);
+            liveFolder = `${base}-live-astock-hour`;
+        } else {
+            liveFolder = `${agentFolder}-live`;
+        }
+
+        // Load from both backtest and live folders in parallel
+        const [backtestEntries, liveEntries] = await Promise.all([
+            this._loadEntriesFromPath(agentFolder, `data/${agentDataDir}/${agentFolder}/position/position.jsonl`),
+            this._loadEntriesFromPath(agentFolder, `data/${agentDataDir}/${liveFolder}/position/position.jsonl`),
+        ]);
+
+        // Combine: live entries extend backtest data (dates don't overlap)
+        // If there is date overlap, keep live entries and drop backtest for that date
+        const liveDates = new Set(liveEntries.map(e => e.date));
+        const combined = backtestEntries.filter(e => !liveDates.has(e.date)).concat(liveEntries);
+
+        return combined
+            .filter(t => t.action !== 'initial')
+            .sort((a, b) => new Date(b.date) - new Date(a.date));
+    }
+
+    // Internal: parse a single position.jsonl file
+    async _loadEntriesFromPath(agentFolder, positionPath) {
         try {
-            const marketConfig = window.configLoader.getMarketConfig(market);
-            const agentDataDir = marketConfig ? marketConfig.data_dir : 'agent_data';
-            const positionPath = `data/${agentDataDir}/${agentFolder}/position/position.jsonl`;
-
-            console.log(`[TransactionLoader] Loading transactions from: ${positionPath}`);
-
             const response = await fetch(positionPath);
-            if (!response.ok) {
-                console.warn(`[TransactionLoader] Failed to fetch ${positionPath}: ${response.status}`);
-                return [];
-            }
+            if (!response.ok) return [];
 
             const text = await response.text();
-
-            const transactions = text
+            return text
                 .trim()
                 .split('\n')
                 .filter(line => line.trim())
@@ -62,26 +115,8 @@ class TransactionLoader {
                         positions: data.positions,
                         cash: data.CASH || 0
                     };
-                })
-                .filter(t => {
-                    // Filter out non-trades: no action, no_trade, initial state, or 0 amount
-                    if (!t.action || t.action === 'initial' || t.action === 'no_trade') {
-                        return false;
-                    }
-                    // Filter out transactions with 0 amount (no real trade)
-                    if (!t.amount || t.amount === 0) {
-                        return false;
-                    }
-                    // Filter out transactions with no symbol
-                    if (!t.symbol || t.symbol === '') {
-                        return false;
-                    }
-                    return true;
                 });
-
-            return transactions;
         } catch (error) {
-            console.warn(`Failed to load transactions for ${agentFolder}:`, error);
             return [];
         }
     }
@@ -94,9 +129,23 @@ class TransactionLoader {
             // Sanitize date for Windows compatibility (replace : with -)
             const safeDate = date.replace(/:/g, '-');
             const logPath = `data/${agentDataDir}/${agentFolder}/log/${safeDate}/log.jsonl`;
-            const response = await fetch(logPath);
+            let response = await fetch(logPath);
 
-            // If log file doesn't exist, return null (no reasoning available)
+            // Fallback: try the corresponding -live folder
+            if (!response.ok) {
+                const isHourly = market === 'cn_hour';
+                let liveFolder;
+                if (isHourly && agentFolder.endsWith('-astock-hour')) {
+                    const base = agentFolder.slice(0, -'-astock-hour'.length);
+                    liveFolder = `${base}-live-astock-hour`;
+                } else {
+                    liveFolder = `${agentFolder}-live`;
+                }
+                const livePath = `data/${agentDataDir}/${liveFolder}/log/${safeDate}/log.jsonl`;
+                response = await fetch(livePath);
+            }
+
+            // If log file doesn't exist in either location, return null
             if (!response.ok) {
                 return null;
             }
