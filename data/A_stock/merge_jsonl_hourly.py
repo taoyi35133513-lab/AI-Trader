@@ -15,6 +15,7 @@ A股小时级数据转JSONL格式脚本
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Dict
 
@@ -70,6 +71,15 @@ def convert_hourly_to_jsonl(
 
     # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Filter out candles that haven't closed yet (incomplete data from intraday fetch)
+    now = datetime.now()
+    now_str = now.strftime("%Y-%m-%d %H:%M")
+    original_len = len(df)
+    df = df[df["trade_date"] <= now_str]
+    filtered = original_len - len(df)
+    if filtered > 0:
+        logger.info("Filtered %d unclosed candle records (after %s)", filtered, now_str)
 
     # Group by stock symbol
     grouped = df.groupby("stock_code")

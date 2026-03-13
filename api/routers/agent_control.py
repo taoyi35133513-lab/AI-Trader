@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from api.config import load_config_json
 from api.services.agent_runner import AgentStatus, get_agent_runner
+from main import calculate_date_range, derive_signature
 
 router = APIRouter()
 
@@ -19,6 +20,7 @@ class StartAgentRequest(BaseModel):
     """Request body for starting agents"""
     frequency: str = "daily"
     model_names: Optional[List[str]] = None  # If None, start all enabled
+    start_date: Optional[str] = None  # Override start date (YYYY-MM-DD)
 
 
 class StartAgentResponse(BaseModel):
@@ -92,10 +94,22 @@ async def start_agents(request: StartAgentRequest):
 
     runner = get_agent_runner()
 
+    # Calculate date range: use config if present, otherwise auto-calculate
+    date_range = config.get("date_range")
+    if not date_range:
+        # Auto-calculate using first model's signature
+        sig = derive_signature(models[0]["name"], frequency)
+        init_date, end_date = calculate_date_range(sig, frequency)
+        date_range = {"init_date": init_date, "end_date": end_date}
+
+    # Allow request to override start_date
+    if request.start_date:
+        date_range["init_date"] = request.start_date
+
     # Build a temporary config with selected models
     run_config = {
         "models": models,
-        "date_range": config.get("date_range", {}),
+        "date_range": date_range,
         "market": config.get("market", "cn"),
     }
 

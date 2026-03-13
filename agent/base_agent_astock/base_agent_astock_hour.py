@@ -303,6 +303,11 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
             trading_logger.log_agent_step(current_step, self.max_steps)
 
             try:
+                # Re-assert runtime config before each agent call to prevent
+                # race conditions when backtest and live run concurrently.
+                write_config_value("SIGNATURE", self.signature)
+                write_config_value("TODAY_DATE", today_date)
+
                 # Call agent
                 response = await self._ainvoke_with_retry(message)
 
@@ -317,7 +322,10 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
 
                 # Extract tool messages with None check (enhanced error handling)
                 tool_msgs = extract_tool_messages(response)
-                tool_response = "\n".join([msg.content for msg in tool_msgs if msg.content is not None])
+                tool_response = "\n".join([
+                    msg.content if isinstance(msg.content, str) else str(msg.content)
+                    for msg in tool_msgs if msg.content is not None
+                ])
 
                 # Prepare new messages
                 new_messages = [

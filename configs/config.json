@@ -34,7 +34,7 @@
     {
       "name": "gemini-2.5-flash",
       "basemodel": "gemini-2.5-flash",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "gpt-5",

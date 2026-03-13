@@ -153,35 +153,42 @@ class TransactionLoader {
             const text = await response.text();
             const lines = text.trim().split('\n').filter(line => line.trim());
 
-            // Collect all assistant messages
-            const assistantMessages = [];
-            for (const line of lines) {
+            // Log files may contain entries from multiple runs for the same date.
+            // Group into sessions (each starting with a user message), then pick
+            // the last session that has actual assistant content.
+            const sessions = []; // each: { startIdx, assistantContents[] }
+            for (let i = 0; i < lines.length; i++) {
                 try {
-                    const data = JSON.parse(line);
-                    if (data.new_messages) {
-                        // Handle both array and single object formats
-                        const messages = Array.isArray(data.new_messages)
-                            ? data.new_messages
-                            : [data.new_messages];
+                    const data = JSON.parse(lines[i]);
+                    if (!data.new_messages) continue;
+                    const messages = Array.isArray(data.new_messages)
+                        ? data.new_messages
+                        : [data.new_messages];
 
-                        for (const msg of messages) {
-                            if (msg.role === 'assistant') {
-                                // Remove <FINISH_SIGNAL> tag if present
-                                const content = msg.content.replace(/<FINISH_SIGNAL>/g, '').trim();
-                                if (content) {
-                                    assistantMessages.push(content);
-                                }
+                    if (messages.some(m => m.role === 'user')) {
+                        sessions.push({ startIdx: i, assistantContents: [] });
+                    }
+
+                    if (sessions.length === 0) continue;
+                    const currentSession = sessions[sessions.length - 1];
+                    for (const msg of messages) {
+                        if (msg.role === 'assistant') {
+                            const content = msg.content.replace(/<FINISH_SIGNAL>/g, '').trim();
+                            if (content) {
+                                currentSession.assistantContents.push(content);
                             }
                         }
                     }
                 } catch (e) {
-                    console.warn(`Failed to parse line: ${line}`, e);
+                    console.warn(`Failed to parse line: ${lines[i]}`, e);
                 }
             }
 
-            if (assistantMessages.length > 0) {
-                // Concatenate all assistant messages with double newlines
-                return assistantMessages.join('\n\n');
+            // Pick the last session that has actual content; fall back to earlier sessions
+            for (let i = sessions.length - 1; i >= 0; i--) {
+                if (sessions[i].assistantContents.length > 0) {
+                    return sessions[i].assistantContents.join('\n\n');
+                }
             }
 
             return null;

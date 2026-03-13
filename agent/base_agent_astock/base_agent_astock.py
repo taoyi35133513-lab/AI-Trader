@@ -295,7 +295,10 @@ class BaseAgentAStock:
             # Get tools
             self.tools = await self.client.get_tools()
             if not self.tools:
-                logger.warning("No MCP tools loaded. MCP services may not be running. Config: %s", self.mcp_config)
+                raise RuntimeError(
+                    "No MCP tools loaded. Cannot run trading session without tools. "
+                    f"MCP services may not be running. Config: {self.mcp_config}"
+                )
             else:
                 logger.info("Loaded %d MCP tools", len(self.tools))
         except Exception as e:
@@ -331,13 +334,17 @@ class BaseAgentAStock:
         logger.info("A-shares agent %s initialization completed", self.signature)
 
     def _setup_logging(self, today_date: str) -> str:
-        """Set up log file path"""
+        """Set up log file path, clearing any stale log from previous runs"""
         # Sanitize date for Windows compatibility (replace : with -)
         safe_date = today_date.replace(":", "-")
         log_path = os.path.join(self.base_log_path, self.signature, "log", safe_date)
         if not os.path.exists(log_path):
             os.makedirs(log_path)
-        return os.path.join(log_path, "log.jsonl")
+        log_file = os.path.join(log_path, "log.jsonl")
+        # Truncate existing log file to avoid accumulating entries from multiple runs
+        if os.path.exists(log_file):
+            open(log_file, "w").close()
+        return log_file
 
     def _log_message(self, log_file: str, new_messages: List[Dict[str, str]], session_timestamp: Optional[datetime] = None) -> None:
         """Log messages to DuckDB (primary) and JSONL file (backup)
@@ -445,6 +452,11 @@ class BaseAgentAStock:
             trading_logger.log_agent_step(current_step, self.max_steps)
 
             try:
+                # Re-assert runtime config before each agent call to prevent
+                # race conditions when backtest and live run concurrently.
+                write_config_value("SIGNATURE", self.signature)
+                write_config_value("TODAY_DATE", today_date)
+
                 # Call agent
                 response = await self._ainvoke_with_retry(message)
 
@@ -459,7 +471,10 @@ class BaseAgentAStock:
 
                 # Extract tool messages
                 tool_msgs = extract_tool_messages(response)
-                tool_response = "\n".join([msg.content for msg in tool_msgs])
+                tool_response = "\n".join([
+                    msg.content if isinstance(msg.content, str) else str(msg.content)
+                    for msg in tool_msgs if msg.content is not None
+                ])
 
                 # Prepare new messages
                 new_messages = [

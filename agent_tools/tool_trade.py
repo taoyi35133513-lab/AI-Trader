@@ -53,16 +53,13 @@ def _write_to_duckdb(
             result = db.conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM positions").fetchone()
             next_id = result[0] if result else 1
 
-            # 提取现金和持仓
+            # 提取现金和动作
             cash = positions.get("CASH", 0)
             action_type = action.get("action", "")
             symbol = action.get("symbol", "")
             amount = action.get("amount", 0)
 
-            # 计算总资产价值（简化：仅现金）
-            total_value = cash
-
-            # 获取当前价格
+            # 获取交易价格
             price = 0
             if symbol and action_type in ("buy", "sell"):
                 try:
@@ -71,7 +68,7 @@ def _write_to_duckdb(
                 except Exception:
                     pass
 
-            # 插入持仓记录（包含 id）
+            # 写入完整持仓快照（所有股票 + 现金）
             sql = """
                 INSERT INTO positions (
                     id, agent_name, market, trade_date, step_id,
@@ -79,23 +76,25 @@ def _write_to_duckdb(
                 ) VALUES (?, ?, 'cn', ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
 
-            ts_code = symbol if symbol else None
-            quantity = positions.get(symbol, 0) if symbol else 0
+            params_list = []
+            for ts_code, qty in positions.items():
+                if ts_code == "CASH":
+                    continue
+                row_price = price if ts_code == symbol else 0
+                params_list.append((
+                    next_id, signature, date, action_id,
+                    ts_code, qty, cash, action_type, amount, row_price, cash,
+                ))
+                next_id += 1
 
-            params = (
-                next_id,
-                signature,
-                date,
-                action_id,
-                ts_code,
-                quantity,
-                cash,
-                action_type,
-                amount,
-                price,
-                total_value,
-            )
-            db.conn.execute(sql, params)
+            if params_list:
+                db.conn.executemany(sql, params_list)
+            else:
+                # No stock positions — insert a cash-only record
+                db.conn.execute(sql, (
+                    next_id, signature, date, action_id,
+                    None, 0, cash, action_type, amount, price, cash,
+                ))
 
             logger.info(f"DuckDB: 写入 {signature} {date} {action_type} {symbol or 'N/A'}")
             return True

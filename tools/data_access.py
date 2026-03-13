@@ -330,7 +330,7 @@ class PositionDataAccess:
     def get_latest_position(
         self, today_date: str, signature: str
     ) -> Tuple[Dict[str, float], int]:
-        """Get latest position with DuckDB-first strategy.
+        """Get latest position with DuckDB-first strategy and JSONL cross-check.
 
         Args:
             today_date: Today's date string
@@ -339,6 +339,9 @@ class PositionDataAccess:
         Returns:
             Tuple of (positions dict, max action_id)
         """
+        duckdb_result = None
+        duckdb_action_id = -1
+
         if self.prefer_duckdb:
             try:
                 from tools import duckdb_queries as dq
@@ -347,7 +350,8 @@ class PositionDataAccess:
                     positions, action_id = dq.query_latest_position(db, signature, today_date)
                     if positions or action_id >= 0:
                         logger.debug(f"DuckDB: Retrieved latest position for {signature}")
-                        return positions, action_id
+                        duckdb_result = positions
+                        duckdb_action_id = action_id
                     else:
                         logger.warning(f"DuckDB: No position found for {signature}, trying JSONL")
 
@@ -355,6 +359,23 @@ class PositionDataAccess:
                 logger.warning(f"DuckDB get_latest_position failed: {e}")
                 if not self.fallback_enabled:
                     raise
+
+        # Always get JSONL result for cross-check when DuckDB returned data
+        if duckdb_result is not None:
+            try:
+                jsonl_result, jsonl_action_id = self._get_latest_position_jsonl(today_date, signature)
+                # Cross-check: if DuckDB has no stock holdings but JSONL does, prefer JSONL
+                duckdb_stocks = {k: v for k, v in duckdb_result.items() if k != "CASH" and v > 0}
+                jsonl_stocks = {k: v for k, v in jsonl_result.items() if k != "CASH" and v > 0}
+                if not duckdb_stocks and jsonl_stocks:
+                    logger.warning(
+                        "DuckDB get_latest_position has no stock holdings but JSONL has %d stocks for %s, using JSONL",
+                        len(jsonl_stocks), signature
+                    )
+                    return jsonl_result, jsonl_action_id
+            except Exception as e:
+                logger.debug(f"JSONL cross-check failed (using DuckDB result): {e}")
+            return duckdb_result, duckdb_action_id
 
         # Fallback to JSONL
         return self._get_latest_position_jsonl(today_date, signature)
@@ -369,7 +390,7 @@ class PositionDataAccess:
     def get_today_init_position(
         self, today_date: str, signature: str
     ) -> Dict[str, float]:
-        """Get opening position for today with DuckDB-first strategy.
+        """Get opening position for today with DuckDB-first strategy and JSONL cross-check.
 
         Args:
             today_date: Today's date string
@@ -378,6 +399,8 @@ class PositionDataAccess:
         Returns:
             Position dictionary {symbol: quantity, "CASH": cash_amount}
         """
+        duckdb_result = None
+
         if self.prefer_duckdb:
             try:
                 from tools import duckdb_queries as dq
@@ -386,7 +409,7 @@ class PositionDataAccess:
                     positions = dq.query_today_init_position(db, today_date, signature)
                     if positions:
                         logger.debug(f"DuckDB: Retrieved init position for {signature}")
-                        return positions
+                        duckdb_result = positions
                     else:
                         logger.warning(f"DuckDB: No init position for {signature}, trying JSONL")
 
@@ -394,6 +417,23 @@ class PositionDataAccess:
                 logger.warning(f"DuckDB get_today_init_position failed: {e}")
                 if not self.fallback_enabled:
                     raise
+
+        # Always get JSONL result for cross-check when DuckDB returned data
+        if duckdb_result is not None:
+            try:
+                jsonl_result = self._get_today_init_position_jsonl(today_date, signature)
+                # Cross-check: if DuckDB has no stock holdings but JSONL does, prefer JSONL
+                duckdb_stocks = {k: v for k, v in duckdb_result.items() if k != "CASH" and v > 0}
+                jsonl_stocks = {k: v for k, v in jsonl_result.items() if k != "CASH" and v > 0}
+                if not duckdb_stocks and jsonl_stocks:
+                    logger.warning(
+                        "DuckDB get_today_init_position has no stock holdings but JSONL has %d stocks for %s, using JSONL",
+                        len(jsonl_stocks), signature
+                    )
+                    return jsonl_result
+            except Exception as e:
+                logger.debug(f"JSONL cross-check failed (using DuckDB result): {e}")
+            return duckdb_result
 
         # Fallback to JSONL
         return self._get_today_init_position_jsonl(today_date, signature)

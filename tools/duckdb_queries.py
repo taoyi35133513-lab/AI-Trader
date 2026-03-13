@@ -364,29 +364,38 @@ def query_latest_position(
     Returns:
         Tuple of (positions dict, max action_id)
     """
-    # Single query: get all positions on max_date OR the most recent date <= max_date
+    # Get the latest step_id on the latest trade_date — that single step
+    # represents the full position snapshot after the last trade.
     sql = """
         SELECT trade_date, ts_code, quantity, step_id, cash
         FROM positions
         WHERE agent_name = ? AND trade_date <= ?
         ORDER BY trade_date DESC, step_id DESC
+        LIMIT 1
     """
     df = db.query(sql, (signature, max_date))
 
     if df.empty:
         return {}, -1
 
-    # All rows with the latest trade_date belong to the current position
     latest_date = df.iloc[0]["trade_date"]
     max_id = int(df.iloc[0]["step_id"])
 
+    # Now fetch all rows with that exact (trade_date, step_id)
+    sql2 = """
+        SELECT ts_code, quantity, cash
+        FROM positions
+        WHERE agent_name = ? AND trade_date = ? AND step_id = ?
+    """
+    df2 = db.query(sql2, (signature, latest_date, max_id))
+
     positions = {}
     cash = None
-    for _, row in df.iterrows():
-        if row["trade_date"] != latest_date:
-            break
-        if row["ts_code"] and row["quantity"] and row["quantity"] > 0:
-            positions[row["ts_code"]] = float(row["quantity"])
+    for _, row in df2.iterrows():
+        if row["ts_code"] and row["quantity"] is not None:
+            qty = float(row["quantity"])
+            if qty > 0:
+                positions[row["ts_code"]] = qty
         if row["cash"] is not None:
             cash = float(row["cash"])
 

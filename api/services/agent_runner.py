@@ -221,19 +221,19 @@ class AgentRunnerService:
             # Get agent class
             AgentClass = get_agent_class(agent_type)
 
-            # Write config values for tools to read
-            write_config_value("SIGNATURE", signature)
-            write_config_value("IF_TRADE", False)
-            write_config_value("MARKET", market)
-            write_config_value("LOG_PATH", log_path)
-
-            # Check position file for fresh start
+            # Check position file for fresh start (must happen BEFORE writing config)
             position_file = project_root / log_path / signature / "position" / "position.jsonl"
             if not position_file.exists():
                 from tools.general_tools import _resolve_runtime_env_path
                 runtime_env_path = _resolve_runtime_env_path()
                 if os.path.exists(runtime_env_path):
                     os.remove(runtime_env_path)
+
+            # Write config values for tools to read (AFTER potential file deletion)
+            write_config_value("SIGNATURE", signature)
+            write_config_value("IF_TRADE", False)
+            write_config_value("MARKET", market)
+            write_config_value("LOG_PATH", log_path)
 
             # Create agent instance
             agent = AgentClass(
