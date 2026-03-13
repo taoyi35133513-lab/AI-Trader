@@ -16,6 +16,11 @@ let currentHoldingsDate = null;  // null means latest
 let currentTradeStartDate = null;
 let currentTradeEndDate = null;
 
+// Flatpickr instances
+let fpHoldings = null;
+let fpTradeStart = null;
+let fpTradeEnd = null;
+
 // Load data and refresh UI
 async function loadDataAndRefresh() {
     showLoading();
@@ -151,13 +156,10 @@ function resetFilters() {
     if (holdingsSearch) holdingsSearch.value = '';
     if (tradeSearch) tradeSearch.value = '';
 
-    // Reset date inputs
-    const holdingsDate = document.getElementById('holdingsDate');
-    const tradeStartDate = document.getElementById('tradeStartDate');
-    const tradeEndDate = document.getElementById('tradeEndDate');
-    if (holdingsDate) holdingsDate.value = '';
-    if (tradeStartDate) tradeStartDate.value = '';
-    if (tradeEndDate) tradeEndDate.value = '';
+    // Reset flatpickr instances
+    if (fpHoldings) fpHoldings.clear();
+    if (fpTradeStart) fpTradeStart.clear();
+    if (fpTradeEnd) fpTradeEnd.clear();
 
     // Reset state
     currentHoldingsDate = null;
@@ -220,17 +222,10 @@ function getAgentDateRange(agentName) {
 
 // Update date picker constraints
 function updateHoldingsDatePicker(agentName) {
-    const dateInput = document.getElementById('holdingsDate');
-    if (!dateInput) return;
-
     const { min, max } = getAgentDateRange(agentName);
-    if (min && max) {
-        dateInput.min = min;
-        dateInput.max = max;
-        // Set default value to max (latest) if not already set
-        if (!dateInput.value) {
-            dateInput.value = max;
-        }
+    if (fpHoldings && min && max) {
+        fpHoldings.set('minDate', min);
+        fpHoldings.set('maxDate', max);
     }
 }
 
@@ -594,16 +589,16 @@ function filterTrades(searchQuery = '', startDate = null, endDate = null) {
 
 // Update trade date picker constraints
 function updateTradeDatePickers(agentName) {
-    const startInput = document.getElementById('tradeStartDate');
-    const endInput = document.getElementById('tradeEndDate');
-    if (!startInput || !endInput) return;
-
     const { min, max } = getAgentDateRange(agentName);
     if (min && max) {
-        startInput.min = min;
-        startInput.max = max;
-        endInput.min = min;
-        endInput.max = max;
+        if (fpTradeStart) {
+            fpTradeStart.set('minDate', min);
+            fpTradeStart.set('maxDate', max);
+        }
+        if (fpTradeEnd) {
+            fpTradeEnd.set('minDate', min);
+            fpTradeEnd.set('maxDate', max);
+        }
     }
 }
 
@@ -612,8 +607,9 @@ async function applyHoldingsFilters() {
     if (!currentAgent) return;
 
     const searchQuery = document.getElementById('holdingsSearch')?.value.trim() || '';
-    const dateInput = document.getElementById('holdingsDate');
-    const targetDate = dateInput?.value || null;
+    const targetDate = fpHoldings && fpHoldings.selectedDates.length > 0
+        ? fpHoldings.formatDate(fpHoldings.selectedDates[0], 'Y-m-d')
+        : null;
 
     await updateHoldingsTable(currentAgent, searchQuery, targetDate);
 }
@@ -621,8 +617,12 @@ async function applyHoldingsFilters() {
 // Apply current filters to trades
 function applyTradeFilters() {
     const searchQuery = document.getElementById('tradeSearch')?.value.trim() || '';
-    const startDate = document.getElementById('tradeStartDate')?.value || null;
-    const endDate = document.getElementById('tradeEndDate')?.value || null;
+    const startDate = fpTradeStart && fpTradeStart.selectedDates.length > 0
+        ? fpTradeStart.formatDate(fpTradeStart.selectedDates[0], 'Y-m-d')
+        : null;
+    const endDate = fpTradeEnd && fpTradeEnd.selectedDates.length > 0
+        ? fpTradeEnd.formatDate(fpTradeEnd.selectedDates[0], 'Y-m-d')
+        : null;
 
     filterTrades(searchQuery, startDate, endDate);
 }
@@ -713,11 +713,21 @@ function setupEventListeners() {
         });
     }
 
-    // Date picker for holdings
-    const holdingsDate = document.getElementById('holdingsDate');
-    if (holdingsDate) {
-        holdingsDate.addEventListener('change', () => {
-            applyHoldingsFilters();
+    // Initialize flatpickr for holdings date
+    const holdingsDateEl = document.getElementById('holdingsDate');
+    if (holdingsDateEl) {
+        fpHoldings = flatpickr(holdingsDateEl, {
+            dateFormat: 'Y-m-d',
+            altInput: true,
+            altFormat: 'M j',
+            altInputClass: 'flatpickr-alt',
+            theme: 'dark',
+            disableMobile: true,
+            monthSelectorType: 'static',
+            animate: true,
+            onChange: function() {
+                applyHoldingsFilters();
+            }
         });
     }
 
@@ -725,8 +735,7 @@ function setupEventListeners() {
     const holdingsDateReset = document.getElementById('holdingsDateReset');
     if (holdingsDateReset) {
         holdingsDateReset.addEventListener('click', () => {
-            const dateInput = document.getElementById('holdingsDate');
-            if (dateInput) dateInput.value = '';
+            if (fpHoldings) fpHoldings.clear();
             applyHoldingsFilters();
         });
     }
@@ -739,19 +748,41 @@ function setupEventListeners() {
         });
     }
 
-    // Date pickers for trade history
-    const tradeStartDate = document.getElementById('tradeStartDate');
-    const tradeEndDate = document.getElementById('tradeEndDate');
+    // Initialize flatpickr for trade date range
+    const tradeStartEl = document.getElementById('tradeStartDate');
+    const tradeEndEl = document.getElementById('tradeEndDate');
 
-    if (tradeStartDate) {
-        tradeStartDate.addEventListener('change', () => {
-            applyTradeFilters();
+    if (tradeStartEl) {
+        fpTradeStart = flatpickr(tradeStartEl, {
+            dateFormat: 'Y-m-d',
+            altInput: true,
+            altFormat: 'M j',
+            altInputClass: 'flatpickr-alt',
+            theme: 'dark',
+            disableMobile: true,
+            monthSelectorType: 'static',
+            animate: true,
+            onChange: function(selectedDates, dateStr) {
+                if (fpTradeEnd && dateStr) fpTradeEnd.set('minDate', dateStr);
+                applyTradeFilters();
+            }
         });
     }
 
-    if (tradeEndDate) {
-        tradeEndDate.addEventListener('change', () => {
-            applyTradeFilters();
+    if (tradeEndEl) {
+        fpTradeEnd = flatpickr(tradeEndEl, {
+            dateFormat: 'Y-m-d',
+            altInput: true,
+            altFormat: 'M j',
+            altInputClass: 'flatpickr-alt',
+            theme: 'dark',
+            disableMobile: true,
+            monthSelectorType: 'static',
+            animate: true,
+            onChange: function(selectedDates, dateStr) {
+                if (fpTradeStart && dateStr) fpTradeStart.set('maxDate', dateStr);
+                applyTradeFilters();
+            }
         });
     }
 
@@ -759,10 +790,14 @@ function setupEventListeners() {
     const tradeDateReset = document.getElementById('tradeDateReset');
     if (tradeDateReset) {
         tradeDateReset.addEventListener('click', () => {
-            const startInput = document.getElementById('tradeStartDate');
-            const endInput = document.getElementById('tradeEndDate');
-            if (startInput) startInput.value = '';
-            if (endInput) endInput.value = '';
+            if (fpTradeStart) {
+                fpTradeStart.clear();
+                fpTradeStart.set('maxDate', null);
+            }
+            if (fpTradeEnd) {
+                fpTradeEnd.clear();
+                fpTradeEnd.set('minDate', null);
+            }
             applyTradeFilters();
         });
     }

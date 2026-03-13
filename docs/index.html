@@ -8,8 +8,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/styles.css?v=12.0">
+    <link rel="stylesheet" href="assets/css/styles.css?v=18.0">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 </head>
 <body>
     <nav class="navbar">
@@ -104,20 +107,32 @@
                         <span class="live-indicator"></span>
                     </h3>
                 </div>
-                <div class="action-filter-controls">
-                    <div class="date-range-box">
-                        <input type="date" id="actionStartDate" class="date-input" title="Start date">
-                        <span class="date-separator">-</span>
-                        <input type="date" id="actionEndDate" class="date-input" title="End date">
-                        <button id="actionDateReset" class="date-reset-btn" title="Reset dates">×</button>
-                    </div>
-                    <label class="action-checkbox-label" title="Hide sessions with no trades">
-                        <input type="checkbox" id="hideNoTrade">
-                        <span>Hide no-trade</span>
-                    </label>
-                    <div class="search-box">
-                        <input type="text" id="actionSearch" class="search-input" placeholder="Search symbol or agent...">
-                        <span class="search-icon">🔍</span>
+                <div class="af-toolbar">
+                    <div class="af-toolbar-row">
+                        <div class="af-group af-date-group">
+                            <svg class="af-group-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 7h12M5 1v4M11 1v4"/></svg>
+                            <input type="text" id="actionStartDate" class="af-date" placeholder="Start" readonly>
+                            <span class="af-date-sep"></span>
+                            <input type="text" id="actionEndDate" class="af-date" placeholder="End" readonly>
+                            <button id="actionDateReset" class="af-reset-btn" title="Reset dates">
+                                <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3l6 6M9 3l-6 6"/></svg>
+                            </button>
+                        </div>
+                        <div class="af-group af-model-group">
+                            <svg class="af-group-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>
+                            <select id="actionModelFilter" class="af-select" title="Filter by model">
+                                <option value="">All Models</option>
+                            </select>
+                        </div>
+                        <label class="af-toggle" title="Hide sessions with no trades">
+                            <input type="checkbox" id="hideNoTrade">
+                            <span class="af-toggle-track"><span class="af-toggle-thumb"></span></span>
+                            <span class="af-toggle-label">Hide no-trade</span>
+                        </label>
+                        <div class="af-search">
+                            <svg class="af-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10 10l4 4"/></svg>
+                            <input type="text" id="actionSearch" class="af-search-input" placeholder="Search symbol or agent...">
+                        </div>
                     </div>
                 </div>
                 <div class="action-list" id="actionList">
@@ -164,6 +179,6 @@
     <script src="assets/js/config-loader.js?v=18.0"></script>
     <script src="assets/js/data-loader.js?v=20.0"></script>
     <script src="assets/js/transaction-loader.js?v=18.0"></script>
-    <script src="assets/js/asset-chart.js?v=26.0"></script>
+    <script src="assets/js/asset-chart.js?v=28.0"></script>
 </body>
 </html>

@@ -8,8 +8,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/styles.css?v=10.0">
+    <link rel="stylesheet" href="assets/css/styles.css?v=18.0">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 </head>
 <body>
     <nav class="navbar">
@@ -84,15 +87,17 @@
         <section class="holdings-section">
             <div class="section-header">
                 <h3>Holdings</h3>
-                <div class="filter-controls">
-                    <div class="date-picker-box">
-                        <label for="holdingsDate">Date:</label>
-                        <input type="date" id="holdingsDate" class="date-input">
-                        <button id="holdingsDateReset" class="date-reset-btn" title="Reset to latest">×</button>
+                <div class="af-toolbar af-toolbar-inline">
+                    <div class="af-group af-date-group">
+                        <svg class="af-group-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 7h12M5 1v4M11 1v4"/></svg>
+                        <input type="text" id="holdingsDate" class="af-date" placeholder="Latest" readonly>
+                        <button id="holdingsDateReset" class="af-reset-btn" title="Reset to latest">
+                            <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3l6 6M9 3l-6 6"/></svg>
+                        </button>
                     </div>
-                    <div class="search-box">
-                        <input type="text" id="holdingsSearch" class="search-input" placeholder="Search symbol...">
-                        <span class="search-icon">🔍</span>
+                    <div class="af-search">
+                        <svg class="af-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10 10l4 4"/></svg>
+                        <input type="text" id="holdingsSearch" class="af-search-input" placeholder="Search symbol...">
                     </div>
                 </div>
             </div>
@@ -119,17 +124,19 @@
         <section class="trade-history-section">
             <div class="section-header">
                 <h3>Trade Activity</h3>
-                <div class="filter-controls">
-                    <div class="date-range-box">
-                        <label>Date Range:</label>
-                        <input type="date" id="tradeStartDate" class="date-input" title="Start date">
-                        <span class="date-separator">-</span>
-                        <input type="date" id="tradeEndDate" class="date-input" title="End date">
-                        <button id="tradeDateReset" class="date-reset-btn" title="Reset dates">×</button>
+                <div class="af-toolbar af-toolbar-inline">
+                    <div class="af-group af-date-group">
+                        <svg class="af-group-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 7h12M5 1v4M11 1v4"/></svg>
+                        <input type="text" id="tradeStartDate" class="af-date" placeholder="Start" readonly>
+                        <span class="af-date-sep"></span>
+                        <input type="text" id="tradeEndDate" class="af-date" placeholder="End" readonly>
+                        <button id="tradeDateReset" class="af-reset-btn" title="Reset dates">
+                            <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3l6 6M9 3l-6 6"/></svg>
+                        </button>
                     </div>
-                    <div class="search-box">
-                        <input type="text" id="tradeSearch" class="search-input" placeholder="Search symbol...">
-                        <span class="search-icon">🔍</span>
+                    <div class="af-search">
+                        <svg class="af-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10 10l4 4"/></svg>
+                        <input type="text" id="tradeSearch" class="af-search-input" placeholder="Search symbol...">
                     </div>
                 </div>
             </div>
@@ -154,6 +161,6 @@
 
     <script src="assets/js/config-loader.js?v=18.0"></script>
     <script src="assets/js/data-loader.js?v=19.0"></script>
-    <script src="assets/js/portfolio.js?v=13.0"></script>
+    <script src="assets/js/portfolio.js?v=14.0"></script>
 </body>
 </html>

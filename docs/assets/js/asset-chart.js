@@ -959,7 +959,8 @@ let actionFlowState = {
     searchQuery: '',
     startDate: null,
     endDate: null,
-    hideNoTrade: false         // Show no-trade entries by default
+    hideNoTrade: false,        // Show no-trade entries by default
+    modelFilter: ''            // Empty = all models
 };
 
 async function createActionFlow() {
@@ -976,6 +977,9 @@ async function createActionFlow() {
         actionFlowState.hideNoTrade = hideCheckbox.checked;
     }
 
+    // Populate model filter dropdown
+    populateModelFilter();
+
     // Initialize date picker constraints
     initActionDatePickers();
 
@@ -989,23 +993,84 @@ async function createActionFlow() {
     setupActionFilterListeners();
 }
 
-// Initialize date picker constraints based on transaction dates
+// Populate model filter dropdown from available agents
+function populateModelFilter() {
+    const select = document.getElementById('actionModelFilter');
+    if (!select) return;
+
+    const currentMarket = dataLoader.getMarket();
+    const agents = window.configLoader.getEnabledAgents(currentMarket);
+
+    // Reset options - keep only the "All Models" default
+    while (select.options.length > 1) {
+        select.remove(1);
+    }
+
+    for (const agent of agents) {
+        const option = document.createElement('option');
+        option.value = agent.folder;
+        option.textContent = agent.display_name || agent.folder;
+        select.appendChild(option);
+    }
+}
+
+// Flatpickr instances stored for reset
+let fpStart = null;
+let fpEnd = null;
+
+// Initialize flatpickr date pickers
 function initActionDatePickers() {
     const startInput = document.getElementById('actionStartDate');
     const endInput = document.getElementById('actionEndDate');
     if (!startInput || !endInput) return;
 
+    // Compute date bounds from transactions
+    let minDate = null;
+    let maxDate = null;
     if (actionFlowState.allTransactions.length > 0) {
-        // Get date range from transactions
         const dates = actionFlowState.allTransactions.map(t => t.date.split(' ')[0]);
-        const minDate = dates[dates.length - 1]; // Oldest (transactions are sorted newest first)
-        const maxDate = dates[0]; // Newest
-
-        startInput.min = minDate;
-        startInput.max = maxDate;
-        endInput.min = minDate;
-        endInput.max = maxDate;
+        minDate = dates[dates.length - 1];
+        maxDate = dates[0];
     }
+
+    const commonOpts = {
+        dateFormat: 'Y-m-d',
+        altInput: true,
+        altFormat: 'M j',           // Display as "Mar 5"
+        altInputClass: 'flatpickr-alt',
+        theme: 'dark',
+        disableMobile: true,
+        minDate: minDate,
+        maxDate: maxDate,
+        monthSelectorType: 'static',
+        animate: true,
+    };
+
+    // Destroy previous instances if re-initializing
+    if (fpStart) { fpStart.destroy(); fpStart = null; }
+    if (fpEnd) { fpEnd.destroy(); fpEnd = null; }
+
+    fpStart = flatpickr(startInput, {
+        ...commonOpts,
+        placeholder: 'Start',
+        onChange: function(selectedDates, dateStr) {
+            actionFlowState.startDate = dateStr || null;
+            // Update end picker min date
+            if (fpEnd && dateStr) fpEnd.set('minDate', dateStr);
+            applyActionFilters();
+        }
+    });
+
+    fpEnd = flatpickr(endInput, {
+        ...commonOpts,
+        placeholder: 'End',
+        onChange: function(selectedDates, dateStr) {
+            actionFlowState.endDate = dateStr || null;
+            // Update start picker max date
+            if (fpStart && dateStr) fpStart.set('maxDate', dateStr);
+            applyActionFilters();
+        }
+    });
 }
 
 // Debounce timer for search input
@@ -1024,38 +1089,31 @@ function debouncedApplyActionFilters(delay = 300) {
 // Set up filter event listeners
 function setupActionFilterListeners() {
     const searchInput = document.getElementById('actionSearch');
-    const startDateInput = document.getElementById('actionStartDate');
-    const endDateInput = document.getElementById('actionEndDate');
     const resetBtn = document.getElementById('actionDateReset');
 
     if (searchInput) {
         searchInput.addEventListener('input', (e) => {
             actionFlowState.searchQuery = e.target.value.trim();
-            // Use debounce for text input to reduce flickering
             debouncedApplyActionFilters(250);
         });
     }
 
-    if (startDateInput) {
-        startDateInput.addEventListener('change', (e) => {
-            actionFlowState.startDate = e.target.value || null;
-            applyActionFilters();
-        });
-    }
-
-    if (endDateInput) {
-        endDateInput.addEventListener('change', (e) => {
-            actionFlowState.endDate = e.target.value || null;
-            applyActionFilters();
-        });
-    }
+    // Date change is handled by flatpickr onChange callbacks in initActionDatePickers
 
     if (resetBtn) {
         resetBtn.addEventListener('click', () => {
-            if (startDateInput) startDateInput.value = '';
-            if (endDateInput) endDateInput.value = '';
+            if (fpStart) { fpStart.clear(); fpStart.set('maxDate', fpStart.config.maxDate); }
+            if (fpEnd) { fpEnd.clear(); fpEnd.set('minDate', fpEnd.config.minDate); }
             actionFlowState.startDate = null;
             actionFlowState.endDate = null;
+            applyActionFilters();
+        });
+    }
+
+    const modelSelect = document.getElementById('actionModelFilter');
+    if (modelSelect) {
+        modelSelect.addEventListener('change', (e) => {
+            actionFlowState.modelFilter = e.target.value;
             applyActionFilters();
         });
     }
@@ -1098,6 +1156,11 @@ function buildStockUrl(symbol) {
 function applyActionFilters() {
     let filtered = actionFlowState.allTransactions;
 
+    // Filter by model
+    if (actionFlowState.modelFilter) {
+        filtered = filtered.filter(t => t.agentFolder === actionFlowState.modelFilter);
+    }
+
     // Filter by date range
     if (actionFlowState.startDate || actionFlowState.endDate) {
         filtered = filtered.filter(t => {
@@ -1108,22 +1171,26 @@ function applyActionFilters() {
         });
     }
 
-    // Filter by search query (symbol or agent name)
+    // Group by agent + date first, then apply text search on groups
+    // This ensures stock code search matches any trade within the group
+    let groups = groupTransactions(filtered);
+
+    // Filter by search query on grouped data
     if (actionFlowState.searchQuery) {
         const query = actionFlowState.searchQuery.toLowerCase();
         const currentMarket = dataLoader.getMarket();
-        filtered = filtered.filter(t => {
-            const symbolMatch = t.symbol.toLowerCase().includes(query);
-            const agentMatch = t.agentFolder.toLowerCase().includes(query);
-            const displayName = window.configLoader.getDisplayName(t.agentFolder, currentMarket) || '';
+        groups = groups.filter(g => {
+            const agentMatch = g.agentFolder.toLowerCase().includes(query);
+            const displayName = window.configLoader.getDisplayName(g.agentFolder, currentMarket) || '';
             const displayNameMatch = displayName.toLowerCase().includes(query);
-            const actionMatch = t.action.toLowerCase().includes(query);
-            return symbolMatch || agentMatch || displayNameMatch || actionMatch;
+            // Check if any trade in the group matches the symbol or action
+            const tradeMatch = g.trades.some(t =>
+                t.symbol.toLowerCase().includes(query) ||
+                t.action.toLowerCase().includes(query)
+            );
+            return agentMatch || displayNameMatch || tradeMatch;
         });
     }
-
-    // Group by agent + date
-    let groups = groupTransactions(filtered);
 
     // Optionally hide no-trade groups
     if (actionFlowState.hideNoTrade) {
@@ -1309,7 +1376,7 @@ function updateStatusNote() {
     const filteredCount = actionFlowState.filteredTransactions.length;
     const totalCount = actionFlowState.allTransactions.length;
     const loaded = actionFlowState.loadedCount;
-    const hasFilters = actionFlowState.searchQuery || actionFlowState.startDate || actionFlowState.endDate;
+    const hasFilters = actionFlowState.searchQuery || actionFlowState.startDate || actionFlowState.endDate || actionFlowState.modelFilter;
 
     if (hasFilters) {
         // Show filtered results info
