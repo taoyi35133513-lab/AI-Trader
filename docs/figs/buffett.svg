@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <circle cx="32" cy="32" r="30" fill="#1e2130" stroke="#4A90D9" stroke-width="2"/>
+  <!-- Face -->
+  <circle cx="32" cy="28" r="14" fill="#f5d6b8"/>
+  <!-- Hair -->
+  <path d="M18 24c0-8 6-16 14-16s14 8 14 16" fill="#d4d4d4" stroke="#bbb" stroke-width="0.5"/>
+  <!-- Glasses -->
+  <circle cx="26" cy="27" r="5" fill="none" stroke="#333" stroke-width="1.5"/>
+  <circle cx="38" cy="27" r="5" fill="none" stroke="#333" stroke-width="1.5"/>
+  <line x1="31" y1="27" x2="33" y2="27" stroke="#333" stroke-width="1.5"/>
+  <line x1="21" y1="26" x2="18" y2="25" stroke="#333" stroke-width="1.5"/>
+  <line x1="43" y1="26" x2="46" y2="25" stroke="#333" stroke-width="1.5"/>
+  <!-- Eyes -->
+  <circle cx="26" cy="27" r="1.5" fill="#333"/>
+  <circle cx="38" cy="27" r="1.5" fill="#333"/>
+  <!-- Nose -->
+  <path d="M31 30 Q32 33 33 30" stroke="#c4a882" stroke-width="1" fill="none"/>
+  <!-- Smile -->
+  <path d="M27 34 Q32 38 37 34" stroke="#333" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+  <!-- Suit -->
+  <path d="M18 46 Q18 42 26 40 L32 44 L38 40 Q46 42 46 46 L46 56 Q32 58 18 56 Z" fill="#1a365d"/>
+  <!-- Tie -->
+  <path d="M31 44 L30 52 L32 54 L34 52 L33 44 Z" fill="#c53030"/>
+  <!-- Shirt collar -->
+  <path d="M28 40 L32 44 L36 40" fill="white" stroke="white" stroke-width="0.5"/>
+</svg>

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <circle cx="32" cy="32" r="30" fill="#1e2130" stroke="#E74C3C" stroke-width="2"/>
+  <!-- Face -->
+  <circle cx="32" cy="28" r="14" fill="#f5d6b8"/>
+  <!-- Hair - slicked back, early 1900s style -->
+  <path d="M18 23c0-9 6-16 14-16s14 7 14 16" fill="#3a2a1a" stroke="#2a1a0a" stroke-width="0.5"/>
+  <path d="M18 23c-1 1-1 3 0 4" fill="#3a2a1a"/>
+  <path d="M46 23c1 1 1 3 0 4" fill="#3a2a1a"/>
+  <!-- Part line -->
+  <line x1="28" y1="8" x2="26" y2="22" stroke="#2a1a0a" stroke-width="0.8"/>
+  <!-- Eyes - intense, focused -->
+  <circle cx="26" cy="27" r="2" fill="#333"/>
+  <circle cx="38" cy="27" r="2" fill="#333"/>
+  <circle cx="26.5" cy="26.5" r="0.5" fill="white"/>
+  <circle cx="38.5" cy="26.5" r="0.5" fill="white"/>
+  <!-- Eyebrows - strong, determined -->
+  <path d="M22 24 L29 23" stroke="#3a2a1a" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <path d="M35 23 L42 24" stroke="#3a2a1a" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+  <!-- Mustache - early 1900s style -->
+  <path d="M27 32 Q32 34 37 32" stroke="#3a2a1a" stroke-width="1.5" fill="none"/>
+  <!-- Nose -->
+  <path d="M31 29 Q32 32 33 29" stroke="#c4a882" stroke-width="1" fill="none"/>
+  <!-- Mouth -->
+  <path d="M29 35 Q32 36 35 35" stroke="#333" stroke-width="0.8" fill="none" stroke-linecap="round"/>
+  <!-- Suit - classic early 1900s -->
+  <path d="M18 46 Q18 42 26 40 L32 44 L38 40 Q46 42 46 46 L46 56 Q32 58 18 56 Z" fill="#2c2c2c"/>
+  <!-- Tie - classic red -->
+  <path d="M31 44 L30 52 L32 54 L34 52 L33 44 Z" fill="#8B0000"/>
+  <!-- Shirt collar - high collar style -->
+  <path d="M28 40 L32 44 L36 40" fill="#f0f0e8" stroke="#f0f0e8" stroke-width="0.5"/>
+  <!-- Lapel pins -->
+  <circle cx="25" cy="44" r="1" fill="#DAA520"/>
+</svg>

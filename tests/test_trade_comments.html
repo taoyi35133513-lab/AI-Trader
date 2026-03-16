@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Trade Comments API Test</title>
+<style>
+    body { font-family: 'SF Mono', monospace; background: #1a1a2e; color: #e0e0e0; padding: 2rem; }
+    h1 { color: #4A90D9; }
+    .test-group { margin: 1.5rem 0; padding: 1rem; background: #16213e; border-radius: 8px; }
+    .test-group h2 { color: #6CB4EE; margin-top: 0; font-size: 1rem; }
+    .test-case { margin: 0.5rem 0; padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.85rem; }
+    .pass { background: rgba(52, 168, 83, 0.15); border-left: 3px solid #34A853; }
+    .fail { background: rgba(234, 67, 53, 0.15); border-left: 3px solid #EA4335; }
+    .running { background: rgba(251, 188, 4, 0.15); border-left: 3px solid #FBBC04; }
+    .detail { color: #9AA0A6; font-size: 0.8rem; margin-top: 4px; white-space: pre-wrap; }
+    #summary { margin-top: 1rem; padding: 1rem; background: #0f3460; border-radius: 8px; font-weight: bold; }
+    button { background: #4A90D9; color: white; border: none; padding: 0.5rem 1.5rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
+    button:hover { background: #5BA0E5; }
+    #apiUrl { background: #16213e; border: 1px solid #333; color: #e0e0e0; padding: 0.5rem; border-radius: 4px; width: 300px; margin-right: 0.5rem; }
+</style>
+</head>
+<body>
+<h1>Trade Comments API Tests</h1>
+<div>
+    <label>API Base URL: </label>
+    <input id="apiUrl" value="http://localhost:8888" />
+    <button onclick="runAllTests()">Run Tests</button>
+</div>
+<div id="results"></div>
+<div id="summary"></div>
+
+<script>
+let apiBase = '';
+let passed = 0, failed = 0, total = 0;
+let createdCommentId = null;
+
+function getApiBase() {
+    return document.getElementById('apiUrl').value.replace(/\/$/, '');
+}
+
+function addResult(group, name, success, detail) {
+    total++;
+    if (success) passed++; else failed++;
+    const container = document.getElementById('group-' + group);
+    if (!container) return;
+    const div = document.createElement('div');
+    div.className = 'test-case ' + (success ? 'pass' : 'fail');
+    div.textContent = (success ? '\u2713 ' : '\u2717 ') + name;
+    if (detail) {
+        const d = document.createElement('div');
+        d.className = 'detail';
+        d.textContent = detail;
+        div.appendChild(d);
+    }
+    container.appendChild(div);
+}
+
+function addGroup(id, title) {
+    const results = document.getElementById('results');
+    const grp = document.createElement('div');
+    grp.className = 'test-group';
+    const h = document.createElement('h2');
+    h.textContent = title;
+    grp.appendChild(h);
+    const content = document.createElement('div');
+    content.id = 'group-' + id;
+    grp.appendChild(content);
+    results.appendChild(grp);
+}
+
+async function runAllTests() {
+    apiBase = getApiBase();
+    passed = 0; failed = 0; total = 0;
+    createdCommentId = null;
+    document.getElementById('results').textContent = '';
+    document.getElementById('summary').textContent = 'Running...';
+
+    addGroup('create', 'POST /api/trade-comments/ — Create');
+    addGroup('get', 'GET /api/trade-comments/{agent} — List');
+    addGroup('trade', 'GET /api/trade-comments/{agent}/trade — Trade Filter');
+    addGroup('update', 'PUT /api/trade-comments/{id} — Update');
+    addGroup('delete', 'DELETE /api/trade-comments/{id} — Delete');
+    addGroup('edge', 'Edge Cases');
+
+    await testCreate();
+    await testGet();
+    await testGetTrade();
+    await testUpdate();
+    await testDelete();
+    await testEdgeCases();
+
+    // Cleanup
+    await cleanup();
+
+    document.getElementById('summary').textContent =
+        `Done: ${passed}/${total} passed, ${failed} failed`;
+    document.getElementById('summary').style.borderLeft =
+        '3px solid ' + (failed === 0 ? '#34A853' : '#EA4335');
+}
+
+async function testCreate() {
+    const group = 'create';
+    try {
+        // Test 1: Create a comment
+        const resp = await fetch(apiBase + '/api/trade-comments/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                agent_name: 'test-web-agent',
+                market: 'cn',
+                trade_date: '2026-01-15',
+                ts_code: '600519.SH',
+                action: 'buy',
+                comment_text: 'Web test comment',
+            }),
+        });
+        const data = await resp.json();
+        addResult(group, 'Status 200', resp.status === 200, 'Got: ' + resp.status);
+        addResult(group, 'Has id', typeof data.id === 'number', 'id=' + data.id);
+        addResult(group, 'comment_text matches', data.comment_text === 'Web test comment', data.comment_text);
+        addResult(group, 'has created_at', !!data.created_at, data.created_at);
+        createdCommentId = data.id;
+
+        // Test 2: Create second comment (different trade)
+        const resp2 = await fetch(apiBase + '/api/trade-comments/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                agent_name: 'test-web-agent',
+                market: 'cn',
+                trade_date: '2026-01-16',
+                ts_code: '601318.SH',
+                action: 'sell',
+                comment_text: 'Second comment',
+            }),
+        });
+        const data2 = await resp2.json();
+        addResult(group, 'Second comment auto-increment', data2.id > data.id,
+            'id1=' + data.id + ', id2=' + data2.id);
+    } catch (e) {
+        addResult(group, 'Request failed', false, e.message);
+    }
+}
+
+async function testGet() {
+    const group = 'get';
+    try {
+        const resp = await fetch(apiBase + '/api/trade-comments/test-web-agent');
+        const data = await resp.json();
+        addResult(group, 'Status 200', resp.status === 200, 'Got: ' + resp.status);
+        addResult(group, 'Returns array', Array.isArray(data), 'Type: ' + typeof data);
+        addResult(group, 'Has 2 comments', data.length === 2, 'Length: ' + data.length);
+
+        // With date filter
+        const resp2 = await fetch(apiBase + '/api/trade-comments/test-web-agent?trade_date=2026-01-15');
+        const data2 = await resp2.json();
+        addResult(group, 'Date filter works', data2.length === 1, 'Filtered length: ' + data2.length);
+
+        // Non-existent agent
+        const resp3 = await fetch(apiBase + '/api/trade-comments/nonexistent-agent');
+        const data3 = await resp3.json();
+        addResult(group, 'Empty for unknown agent', data3.length === 0, 'Length: ' + data3.length);
+    } catch (e) {
+        addResult(group, 'Request failed', false, e.message);
+    }
+}
+
+async function testGetTrade() {
+    const group = 'trade';
+    try {
+        const params = new URLSearchParams({
+            trade_date: '2026-01-15',
+            ts_code: '600519.SH',
+            action: 'buy',
+        });
+        const resp = await fetch(apiBase + '/api/trade-comments/test-web-agent/trade?' + params);
+        const data = await resp.json();
+        addResult(group, 'Status 200', resp.status === 200);
+        addResult(group, 'Returns 1 matching comment', data.length === 1, 'Length: ' + data.length);
+        if (data.length > 0) {
+            addResult(group, 'Correct ts_code', data[0].ts_code === '600519.SH');
+            addResult(group, 'Correct action', data[0].action === 'buy');
+        }
+
+        // No match
+        const params2 = new URLSearchParams({
+            trade_date: '2026-01-15',
+            ts_code: '600519.SH',
+            action: 'sell',
+        });
+        const resp2 = await fetch(apiBase + '/api/trade-comments/test-web-agent/trade?' + params2);
+        const data2 = await resp2.json();
+        addResult(group, 'Empty for non-matching action', data2.length === 0);
+    } catch (e) {
+        addResult(group, 'Request failed', false, e.message);
+    }
+}
+
+async function testUpdate() {
+    const group = 'update';
+    if (!createdCommentId) {
+        addResult(group, 'Skipped — no comment created', false);
+        return;
+    }
+    try {
+        const resp = await fetch(apiBase + '/api/trade-comments/' + createdCommentId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ comment_text: 'Updated via web test' }),
+        });
+        const data = await resp.json();
+        addResult(group, 'Status 200', resp.status === 200);
+        addResult(group, 'Text updated', data.comment_text === 'Updated via web test', data.comment_text);
+        addResult(group, 'Has updated_at', !!data.updated_at, data.updated_at);
+
+        // Update non-existent
+        const resp2 = await fetch(apiBase + '/api/trade-comments/99999', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ comment_text: 'x' }),
+        });
+        addResult(group, '404 for non-existent', resp2.status === 404, 'Got: ' + resp2.status);
+    } catch (e) {
+        addResult(group, 'Request failed', false, e.message);
+    }
+}
+
+async function testDelete() {
+    const group = 'delete';
+    if (!createdCommentId) {
+        addResult(group, 'Skipped — no comment created', false);
+        return;
+    }
+    try {
+        const resp = await fetch(apiBase + '/api/trade-comments/' + createdCommentId, {
+            method: 'DELETE',
+        });
+        const data = await resp.json();
+        addResult(group, 'Status 200', resp.status === 200);
+        addResult(group, 'ok: true', data.ok === true);
+
+        // Verify deleted
+        const params = new URLSearchParams({
+            trade_date: '2026-01-15', ts_code: '600519.SH', action: 'buy',
+        });
+        const verifyResp = await fetch(apiBase + '/api/trade-comments/test-web-agent/trade?' + params);
+        const verifyData = await verifyResp.json();
+        addResult(group, 'Verified deleted', verifyData.length === 0, 'Length: ' + verifyData.length);
+
+        // Delete non-existent
+        const resp2 = await fetch(apiBase + '/api/trade-comments/99999', { method: 'DELETE' });
+        addResult(group, '404 for non-existent', resp2.status === 404, 'Got: ' + resp2.status);
+    } catch (e) {
+        addResult(group, 'Request failed', false, e.message);
+    }
+}
+
+async function testEdgeCases() {
+    const group = 'edge';
+    try {
+        // Missing required fields
+        const resp = await fetch(apiBase + '/api/trade-comments/', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ agent_name: 'test' }),
+        });
+        addResult(group, '422 for missing fields', resp.status === 422, 'Got: ' + resp.status);
+
+        // Missing required query params for /trade endpoint
+        const resp2 = await fetch(apiBase + '/api/trade-comments/test-web-agent/trade');
+        addResult(group, '422 for missing trade query params', resp2.status === 422, 'Got: ' + resp2.status);
+
+        // Empty body for PUT
+        const resp3 = await fetch(apiBase + '/api/trade-comments/1', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: '{}',
+        });
+        addResult(group, '422 for empty update body', resp3.status === 422, 'Got: ' + resp3.status);
+    } catch (e) {
+        addResult(group, 'Request failed', false, e.message);
+    }
+}
+
+async function cleanup() {
+    // Delete remaining test data
+    try {
+        const resp = await fetch(apiBase + '/api/trade-comments/test-web-agent');
+        const data = await resp.json();
+        for (const comment of data) {
+            await fetch(apiBase + '/api/trade-comments/' + comment.id, { method: 'DELETE' });
+        }
+    } catch (e) {
+        // ignore cleanup errors
+    }
+}
+</script>
+</body>
+</html>

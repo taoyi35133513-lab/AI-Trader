@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 from api.config import settings, load_config_json
 from api.routers import agents, benchmarks, config, dashboard, prices, agent_control, live_trading, market_data, positions
-from api.routers import agent_logs, agent_positions, trade_comments
+from api.routers import agent_logs, agent_positions, trade_comments, master_commentary, memory
 from api.mcp_integration import get_mcp_apps, get_combined_lifespan
 
 
@@ -95,6 +95,10 @@ async def lifespan(app: FastAPI):
                     _conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_date ON trade_comments(trade_date)")
                     _conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_agent_market ON trade_comments(agent_name, market)")
                     logger.info("Recreated trade_comments table with sequence (was empty)")
+
+        # Initialize agent_memory table
+        from api.services.memory_service import init_memory_table
+        init_memory_table(_conn)
 
         _conn.close()
     except Exception as e:
@@ -171,6 +175,8 @@ app.include_router(positions.router, prefix="/api/positions", tags=["Positions"]
 app.include_router(agent_logs.router, tags=["Agent Logs"])
 app.include_router(agent_positions.router, tags=["Agent Positions V2"])
 app.include_router(trade_comments.router, tags=["Trade Comments"])
+app.include_router(master_commentary.router, prefix="/api/master-commentary", tags=["Master Commentary"])
+app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
 
 # 挂载 MCP 服务
 # Each MCP service is mounted at /mcp/{service_name}/

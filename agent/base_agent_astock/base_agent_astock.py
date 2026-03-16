@@ -495,6 +495,10 @@ class BaseAgentAStock:
 
         # Handle trading results
         await self._handle_trading_result(today_date)
+
+        # Generate L1 reflection after trading session
+        await self._generate_reflection(today_date, message)
+
         trading_logger.log_trading_day_end(today_date)
 
     async def _handle_trading_result(self, today_date: str) -> None:
@@ -512,6 +516,100 @@ class BaseAgentAStock:
                 trading_logger.error(f"添加无交易记录失败: {e}")
                 raise
             write_config_value("IF_TRADE", False)
+
+    async def _generate_reflection(self, date_str: str, messages: list):
+        """Generate a L1 reflection after trading session."""
+        try:
+            import duckdb
+            from api.config import get_database_path
+            from api.services.memory_service import MemoryService
+            from api.services.memory_consolidation import consolidate_l1_to_l2, consolidate_l2_to_l3
+            from prompts.components.memory import REFLECTION_GENERATE_PROMPT
+
+            # Extract actions and reasoning from messages
+            actions = []
+            reasoning_parts = []
+            for msg in messages:
+                if isinstance(msg, dict):
+                    content = msg.get("content", "")
+                    role = msg.get("role", "")
+                    if role == "assistant" and content and len(content) > 20:
+                        reasoning_parts.append(content[:300])
+                elif hasattr(msg, 'content') and msg.content:
+                    content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                    if len(content) > 20:
+                        reasoning_parts.append(content[:300])
+                # Check for tool calls (trade actions)
+                if hasattr(msg, 'tool_calls'):
+                    for tc in (msg.tool_calls or []):
+                        if isinstance(tc, dict):
+                            actions.append(f"{tc.get('name', '')}: {tc.get('args', '')}")
+
+            if not actions:
+                actions = ["无交易操作"]
+
+            actions_text = "; ".join(actions[:5])
+            reasoning_text = "\n".join(reasoning_parts[:3]) if reasoning_parts else "无推理记录"
+
+            # Use the agent's own LLM config for reflection generation
+            from openai import AsyncOpenAI
+
+            api_key = self.openai_api_key or os.environ.get("OPENAI_API_KEY", "")
+            base_url = self.openai_base_url or os.environ.get("OPENAI_API_BASE", "")
+            model_name = self.basemodel or "deepseek-chat"
+
+            if not api_key:
+                return
+
+            client = AsyncOpenAI(api_key=api_key, base_url=base_url or None)
+
+            prompt = REFLECTION_GENERATE_PROMPT.format(
+                date=date_str,
+                actions=actions_text,
+                pnl="见持仓变化",
+                reasoning_summary=reasoning_text[:800],
+            )
+
+            resp = await client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": "你是一个交易复盘助手，用中文简洁地总结交易经验。"},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=300,
+                temperature=0.3,
+            )
+
+            reflection = resp.choices[0].message.content.strip()
+            if not reflection:
+                return
+
+            # Save to DB
+            db_path = get_database_path()
+            conn = duckdb.connect(str(db_path), read_only=False)
+            try:
+                svc = MemoryService(conn)
+                market = "cn_hour" if "-astock-hour" in self.signature else "cn"
+                svc.add_reflection(
+                    agent_name=self.signature,
+                    market=market,
+                    content=reflection,
+                    source_date=date_str,
+                    session_id=self._current_session_id,
+                )
+
+                # Check if consolidation needed
+                if svc.should_consolidate_l1(self.signature, market):
+                    await consolidate_l1_to_l2(svc, self.signature, market)
+                if svc.should_consolidate_l2(self.signature, market):
+                    await consolidate_l2_to_l3(svc, self.signature, market)
+
+                logger.info("[%s] Reflection saved for %s", self.signature, date_str)
+            finally:
+                conn.close()
+
+        except Exception as e:
+            logger.debug("[%s] Reflection generation skipped: %s", self.signature, e)
 
     def register_agent(self) -> None:
         """Register new agent, create initial positions"""

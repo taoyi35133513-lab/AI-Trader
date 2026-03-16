@@ -136,7 +136,7 @@ def get_agent_system_prompt_astock(today_date: str, signature: str, stock_symbol
     except Exception as e:
         logger.debug("Failed to load user comments for prompt: %s", e)
 
-    return build_system_prompt(
+    prompt = build_system_prompt(
         market="cn",
         date=today_date,
         positions=today_init_position,
@@ -146,6 +146,29 @@ def get_agent_system_prompt_astock(today_date: str, signature: str, stock_symbol
         current_profit=current_profit,
         user_comments=user_comments_text,
     )
+
+    # Inject agent memory if available
+    try:
+        import duckdb as _mem_duckdb
+        from api.config import get_database_path as _mem_get_db_path
+        from api.services.memory_service import MemoryService as _MemoryService
+        from prompts.components.memory import build_memory_section
+
+        _mem_db_path = _mem_get_db_path()
+        _mem_conn = _mem_duckdb.connect(str(_mem_db_path), read_only=False)
+        try:
+            _mem_svc = _MemoryService(_mem_conn)
+            _mem_market = "cn_hour" if "-astock-hour" in signature else "cn"
+            _memories = _mem_svc.get_active_memories(signature, _mem_market)
+            _memory_section = build_memory_section(_memories)
+            if _memory_section:
+                prompt += "\n\n" + _memory_section
+        finally:
+            _mem_conn.close()
+    except Exception as e:
+        logger.debug("Memory injection skipped: %s", e)
+
+    return prompt
 
 
 if __name__ == "__main__":
