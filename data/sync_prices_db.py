@@ -37,10 +37,12 @@ def _get_sse50_symbols() -> List[str]:
 
 def sync_hourly_prices(trade_date: str) -> int:
     """
-    Sync hourly candle data from merged_hourly.jsonl into DuckDB.
+    Fetch hourly candles via tushare rt_min and upsert into DuckDB.
 
-    Since tushare stk_mins has very low rate limits, we read hourly data
-    from the local JSONL file which is already updated by fetch_realtime.
+    Uses rt_min(freq='60MIN') which supports batch queries with comma-separated
+    ts_codes (up to 1000 rows per request).
+
+    Falls back to reading from merged_hourly.jsonl if rt_min fails.
 
     Args:
         trade_date: Date string "YYYY-MM-DD"
@@ -59,13 +61,53 @@ def sync_hourly_prices(trade_date: str) -> int:
         [trade_date],
     )
 
+    symbols = _get_sse50_symbols()
+    count = 0
+
+    # Try tushare rt_min batch query first
+    try:
+        from tools.tushare_client import get_tushare_pro
+
+        pro = get_tushare_pro()
+        ts_codes = ",".join(symbols)
+        df = pro.rt_min(ts_code=ts_codes, freq="60MIN")
+
+        if df is not None and not df.empty:
+            # rt_min returns latest candle; filter for today
+            for _, row in df.iterrows():
+                trade_time = str(row["time"])
+                if not trade_time.startswith(trade_date):
+                    continue
+                conn.execute(
+                    "INSERT INTO stock_hourly_prices "
+                    "(ts_code, trade_time, open, high, low, close, volume, market) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, 'cn')",
+                    [
+                        row["ts_code"],
+                        trade_time,
+                        float(row["open"]),
+                        float(row["high"]),
+                        float(row["low"]),
+                        float(row["close"]),
+                        int(float(row["vol"])),
+                    ],
+                )
+                count += 1
+
+            if count > 0:
+                conn.close()
+                logger.info("sync_hourly_prices (rt_min): inserted %d records for %s", count, trade_date)
+                return count
+    except Exception as e:
+        logger.debug("rt_min failed, falling back to JSONL: %s", e)
+
+    # Fallback: read from merged_hourly.jsonl
     merged = PROJECT_ROOT / "data" / "A_stock" / "merged_hourly.jsonl"
     if not merged.exists():
         conn.close()
         logger.warning("merged_hourly.jsonl not found")
         return 0
 
-    count = 0
     with open(merged, "r", encoding="utf-8") as f:
         for line in f:
             try:
@@ -73,7 +115,6 @@ def sync_hourly_prices(trade_date: str) -> int:
                 sym = data.get("Meta Data", {}).get("2. Symbol", "")
                 ts = data.get("Time Series (60min)", {})
                 for time_key, prices in ts.items():
-                    # time_key format: "2026-03-13 10:30:00"
                     if not time_key.startswith(trade_date):
                         continue
                     conn.execute(
@@ -95,7 +136,7 @@ def sync_hourly_prices(trade_date: str) -> int:
                 logger.debug("sync_hourly parse error: %s", e)
 
     conn.close()
-    logger.info("sync_hourly_prices: inserted %d records for %s", count, trade_date)
+    logger.info("sync_hourly_prices (jsonl fallback): inserted %d records for %s", count, trade_date)
     return count
 
 

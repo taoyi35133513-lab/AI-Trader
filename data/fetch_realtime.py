@@ -76,7 +76,8 @@ class RealtimeDataFetcher:
         """
         获取 A 股实时价格
 
-        使用 tushare daily 接口获取当日行情
+        日频: 使用 tushare daily 接口获取当日行情
+        小时频: 使用 tushare rt_min(freq='60MIN') 获取实时分钟数据
 
         Args:
             symbols: 股票代码列表 (如 ['600519.SH', '000001.SZ'])
@@ -90,36 +91,60 @@ class RealtimeDataFetcher:
             from tools.tushare_client import get_tushare_pro
 
             pro = get_tushare_pro()
-            today = datetime.now().strftime("%Y%m%d")
 
-            # 批量获取当日全市场行情
-            logger.info("正在通过 tushare 获取 A 股行情 (trade_date=%s)...", today)
-            df = pro.daily(trade_date=today)
+            if self.frequency == "hourly":
+                # 小时频: 使用 rt_min 批量获取实时 60 分钟 K 线
+                # rt_min 支持逗号分隔多个 ts_code，最多 1000 行
+                logger.info("正在通过 tushare rt_min 获取实时小时行情...")
+                ts_codes = ",".join(symbols)
+                df = pro.rt_min(ts_code=ts_codes, freq="60MIN")
 
-            if df is None or df.empty:
-                logger.warning("tushare daily 返回空数据，尝试获取最近交易日...")
-                # 当日可能非交易日或盘中未收盘，获取最近一个交易日
-                df = pro.daily(ts_code=symbols[0], start_date=today, end_date=today)
                 if df is None or df.empty:
+                    logger.warning("tushare rt_min 返回空数据")
                     return prices
 
-            # 过滤出需要的股票，转为字典方便查找
-            symbol_set = set(symbols)
-            df_filtered = df[df["ts_code"].isin(symbol_set)]
+                for _, row in df.iterrows():
+                    sym = row["ts_code"]
+                    try:
+                        prices[sym] = {
+                            "open": float(row["open"]),
+                            "high": float(row["high"]),
+                            "low": float(row["low"]),
+                            "close": float(row["close"]),
+                            "volume": int(float(row["vol"])),
+                        }
+                    except Exception as e:
+                        logger.warning("获取 %s 价格失败: %s", sym, e)
+                        continue
+            else:
+                # 日频: 使用 daily 批量获取全市场当日行情
+                today = datetime.now().strftime("%Y%m%d")
+                logger.info("正在通过 tushare daily 获取 A 股行情 (trade_date=%s)...", today)
+                df = pro.daily(trade_date=today)
 
-            for _, row in df_filtered.iterrows():
-                sym = row["ts_code"]
-                try:
-                    prices[sym] = {
-                        "open": float(row["open"]),
-                        "high": float(row["high"]),
-                        "low": float(row["low"]),
-                        "close": float(row["close"]),
-                        "volume": int(float(row["vol"])),
-                    }
-                except Exception as e:
-                    logger.warning("获取 %s 价格失败: %s", sym, e)
-                    continue
+                if df is None or df.empty:
+                    logger.warning("tushare daily 返回空数据，尝试获取最近交易日...")
+                    df = pro.daily(ts_code=symbols[0], start_date=today, end_date=today)
+                    if df is None or df.empty:
+                        return prices
+
+                # 过滤出需要的股票
+                symbol_set = set(symbols)
+                df_filtered = df[df["ts_code"].isin(symbol_set)]
+
+                for _, row in df_filtered.iterrows():
+                    sym = row["ts_code"]
+                    try:
+                        prices[sym] = {
+                            "open": float(row["open"]),
+                            "high": float(row["high"]),
+                            "low": float(row["low"]),
+                            "close": float(row["close"]),
+                            "volume": int(float(row["vol"])),
+                        }
+                    except Exception as e:
+                        logger.warning("获取 %s 价格失败: %s", sym, e)
+                        continue
 
             logger.info("成功获取 %d/%d 只股票价格", len(prices), len(symbols))
 
