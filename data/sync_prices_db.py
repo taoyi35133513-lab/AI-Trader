@@ -1,5 +1,5 @@
 """
-Price data sync: fetch candle data from AKShare and insert into DuckDB.
+Price data sync: fetch candle data from Tushare and insert into DuckDB.
 
 Called by the scheduler after each trading session to keep the dashboard
 gap-filling and benchmark alignment working correctly.
@@ -37,7 +37,10 @@ def _get_sse50_symbols() -> List[str]:
 
 def sync_hourly_prices(trade_date: str) -> int:
     """
-    Fetch all hourly candles for *trade_date* via AKShare and upsert into DuckDB.
+    Sync hourly candle data from merged_hourly.jsonl into DuckDB.
+
+    Since tushare stk_mins has very low rate limits, we read hourly data
+    from the local JSONL file which is already updated by fetch_realtime.
 
     Args:
         trade_date: Date string "YYYY-MM-DD"
@@ -45,7 +48,6 @@ def sync_hourly_prices(trade_date: str) -> int:
     Returns:
         Number of records inserted
     """
-    import akshare as ak
     import duckdb
 
     db_path = PROJECT_ROOT / "data" / "database" / "ai_trader.duckdb"
@@ -57,36 +59,40 @@ def sync_hourly_prices(trade_date: str) -> int:
         [trade_date],
     )
 
-    symbols = _get_sse50_symbols()
+    merged = PROJECT_ROOT / "data" / "A_stock" / "merged_hourly.jsonl"
+    if not merged.exists():
+        conn.close()
+        logger.warning("merged_hourly.jsonl not found")
+        return 0
+
     count = 0
-    for sym in symbols:
-        code = sym.replace(".SH", "").replace(".SZ", "")
-        try:
-            df = ak.stock_zh_a_hist_min_em(
-                symbol=code,
-                period="60",
-                start_date=f"{trade_date} 09:30:00",
-                end_date=f"{trade_date} 15:00:00",
-            )
-            for _, row in df.iterrows():
-                conn.execute(
-                    "INSERT INTO stock_hourly_prices "
-                    "(ts_code, trade_time, open, high, low, close, volume, market) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, 'cn')",
-                    [
-                        sym,
-                        str(row["时间"]),
-                        float(row["开盘"]),
-                        float(row["最高"]),
-                        float(row["最低"]),
-                        float(row["收盘"]),
-                        int(row["成交量"]),
-                    ],
-                )
-                count += 1
-            time.sleep(0.3)
-        except Exception as e:
-            logger.debug("sync_hourly %s: %s", sym, e)
+    with open(merged, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                data = json.loads(line)
+                sym = data.get("Meta Data", {}).get("2. Symbol", "")
+                ts = data.get("Time Series (60min)", {})
+                for time_key, prices in ts.items():
+                    # time_key format: "2026-03-13 10:30:00"
+                    if not time_key.startswith(trade_date):
+                        continue
+                    conn.execute(
+                        "INSERT INTO stock_hourly_prices "
+                        "(ts_code, trade_time, open, high, low, close, volume, market) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, 'cn')",
+                        [
+                            sym,
+                            time_key,
+                            float(prices["1. buy price"]),
+                            float(prices["2. high"]),
+                            float(prices["3. low"]),
+                            float(prices["4. sell price"]),
+                            int(float(prices["5. volume"])),
+                        ],
+                    )
+                    count += 1
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.debug("sync_hourly parse error: %s", e)
 
     conn.close()
     logger.info("sync_hourly_prices: inserted %d records for %s", count, trade_date)
@@ -95,7 +101,7 @@ def sync_hourly_prices(trade_date: str) -> int:
 
 def sync_daily_prices(trade_date: str) -> int:
     """
-    Fetch daily close for *trade_date* via AKShare and upsert into DuckDB.
+    Fetch daily close for *trade_date* via Tushare and upsert into DuckDB.
 
     Args:
         trade_date: Date string "YYYY-MM-DD"
@@ -103,9 +109,10 @@ def sync_daily_prices(trade_date: str) -> int:
     Returns:
         Number of records inserted
     """
-    import akshare as ak
     import duckdb
+    from tools.tushare_client import get_tushare_pro
 
+    pro = get_tushare_pro()
     db_path = PROJECT_ROOT / "data" / "database" / "ai_trader.duckdb"
     conn = duckdb.connect(str(db_path))
 
@@ -113,35 +120,45 @@ def sync_daily_prices(trade_date: str) -> int:
         "DELETE FROM stock_daily_prices WHERE trade_date = ?", [trade_date]
     )
 
-    ak_date = trade_date.replace("-", "")
+    ts_date = trade_date.replace("-", "")
     symbols = _get_sse50_symbols()
+
+    # Batch fetch: tushare daily supports trade_date param for all stocks
+    try:
+        df = pro.daily(trade_date=ts_date)
+    except Exception as e:
+        logger.error("sync_daily_prices batch fetch failed: %s", e)
+        conn.close()
+        return 0
+
+    if df is None or df.empty:
+        conn.close()
+        logger.info("sync_daily_prices: no data for %s", trade_date)
+        return 0
+
+    symbol_set = set(symbols)
+    df_filtered = df[df["ts_code"].isin(symbol_set)]
+
     count = 0
-    for sym in symbols:
-        code = sym.replace(".SH", "").replace(".SZ", "")
+    for _, row in df_filtered.iterrows():
         try:
-            df = ak.stock_zh_a_hist(
-                symbol=code, period="daily", start_date=ak_date, end_date=ak_date
+            conn.execute(
+                "INSERT INTO stock_daily_prices "
+                "(ts_code, trade_date, open, high, low, close, volume, market) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'cn')",
+                [
+                    row["ts_code"],
+                    trade_date,
+                    float(row["open"]),
+                    float(row["high"]),
+                    float(row["low"]),
+                    float(row["close"]),
+                    int(float(row["vol"])),
+                ],
             )
-            if len(df) > 0:
-                row = df.iloc[-1]
-                conn.execute(
-                    "INSERT INTO stock_daily_prices "
-                    "(ts_code, trade_date, open, high, low, close, volume, market) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, 'cn')",
-                    [
-                        sym,
-                        trade_date,
-                        float(row["开盘"]),
-                        float(row["最高"]),
-                        float(row["最低"]),
-                        float(row["收盘"]),
-                        int(row["成交量"]),
-                    ],
-                )
-                count += 1
-            time.sleep(0.3)
+            count += 1
         except Exception as e:
-            logger.debug("sync_daily %s: %s", sym, e)
+            logger.debug("sync_daily %s: %s", row["ts_code"], e)
 
     conn.close()
     logger.info("sync_daily_prices: inserted %d records for %s", count, trade_date)
@@ -158,20 +175,19 @@ def update_sse50_index(trade_date: str) -> bool:
     Returns:
         True if updated successfully
     """
-    import akshare as ak
+    from tools.tushare_client import get_tushare_pro
 
+    pro = get_tushare_pro()
     index_file = PROJECT_ROOT / "data" / "A_stock" / "index_daily_sse_50.json"
     if not index_file.exists():
         logger.warning("SSE 50 index file not found")
         return False
 
     try:
-        df = ak.stock_zh_index_daily_em(
-            symbol="sh000016",
-            start_date=trade_date.replace("-", ""),
-            end_date=trade_date.replace("-", ""),
-        )
-        if len(df) == 0:
+        ts_date = trade_date.replace("-", "")
+        # SSE 50 index code in tushare: 000016.SH
+        df = pro.index_daily(ts_code="000016.SH", start_date=ts_date, end_date=ts_date)
+        if df is None or len(df) == 0:
             logger.warning("No SSE 50 data for %s", trade_date)
             return False
 
@@ -186,7 +202,7 @@ def update_sse50_index(trade_date: str) -> bool:
             "2. high": str(row["high"]),
             "3. low": str(row["low"]),
             "4. close": str(row["close"]),
-            "5. volume": str(int(row["volume"])),
+            "5. volume": str(int(float(row["vol"]))),
         }
 
         with open(index_file, "w", encoding="utf-8") as f:

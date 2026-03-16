@@ -76,7 +76,7 @@ class RealtimeDataFetcher:
         """
         获取 A 股实时价格
 
-        使用 akshare 获取实时行情
+        使用 tushare daily 接口获取当日行情
 
         Args:
             symbols: 股票代码列表 (如 ['600519.SH', '000001.SZ'])
@@ -87,41 +87,44 @@ class RealtimeDataFetcher:
         prices = {}
 
         try:
-            import akshare as ak
+            from tools.tushare_client import get_tushare_pro
 
-            # 获取全部 A 股实时行情
-            logger.info("正在获取 A 股实时行情...")
-            df = ak.stock_zh_a_spot_em()
+            pro = get_tushare_pro()
+            today = datetime.now().strftime("%Y%m%d")
+
+            # 批量获取当日全市场行情
+            logger.info("正在通过 tushare 获取 A 股行情 (trade_date=%s)...", today)
+            df = pro.daily(trade_date=today)
 
             if df is None or df.empty:
-                logger.warning("获取实时行情失败，返回空数据")
-                return prices
+                logger.warning("tushare daily 返回空数据，尝试获取最近交易日...")
+                # 当日可能非交易日或盘中未收盘，获取最近一个交易日
+                df = pro.daily(ts_code=symbols[0], start_date=today, end_date=today)
+                if df is None or df.empty:
+                    return prices
 
-            for symbol in symbols:
+            # 过滤出需要的股票，转为字典方便查找
+            symbol_set = set(symbols)
+            df_filtered = df[df["ts_code"].isin(symbol_set)]
+
+            for _, row in df_filtered.iterrows():
+                sym = row["ts_code"]
                 try:
-                    # 提取股票代码（去掉后缀）
-                    code = symbol.split(".")[0]
-
-                    # 在行情数据中查找
-                    row = df[df["代码"] == code]
-
-                    if not row.empty:
-                        row = row.iloc[0]
-                        prices[symbol] = {
-                            "open": float(row["今开"]) if row["今开"] != "-" else 0,
-                            "high": float(row["最高"]) if row["最高"] != "-" else 0,
-                            "low": float(row["最低"]) if row["最低"] != "-" else 0,
-                            "close": float(row["最新价"]) if row["最新价"] != "-" else 0,
-                            "volume": int(row["成交量"]) if row["成交量"] != "-" else 0,
-                        }
+                    prices[sym] = {
+                        "open": float(row["open"]),
+                        "high": float(row["high"]),
+                        "low": float(row["low"]),
+                        "close": float(row["close"]),
+                        "volume": int(float(row["vol"])),
+                    }
                 except Exception as e:
-                    logger.warning("获取 %s 价格失败: %s", symbol, e)
+                    logger.warning("获取 %s 价格失败: %s", sym, e)
                     continue
 
             logger.info("成功获取 %d/%d 只股票价格", len(prices), len(symbols))
 
         except ImportError:
-            logger.error("请安装 akshare: pip install akshare")
+            logger.error("请安装 tushare: pip install tushare")
         except Exception as e:
             logger.error("获取 A 股实时行情失败: %s", e)
 
