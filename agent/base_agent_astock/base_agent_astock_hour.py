@@ -346,6 +346,10 @@ class BaseAgentAStock_Hour(BaseAgentAStock):
 
         # Handle trading results
         await self._handle_trading_result(today_date)
+
+        # Generate L1 reflection after trading session
+        await self._generate_reflection(today_date, message)
+
         trading_logger.log_trading_day_end(today_date)
 
     def _is_valid_astock_trading_time(self, timestamp: str) -> bool:

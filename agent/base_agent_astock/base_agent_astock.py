@@ -590,8 +590,12 @@ class BaseAgentAStock:
             try:
                 svc = MemoryService(conn)
                 market = "cn_hour" if "-astock-hour" in self.signature else "cn"
+                # Derive agent_name matching frontend convention:
+                # "deepseek-chat-v3.2-live" → "deepseek-chat-v3.2"
+                # "deepseek-chat-v3.2-live-astock-hour" → "deepseek-chat-v3.2-astock-hour"
+                memory_agent = self.signature.replace("-live", "")
                 svc.add_reflection(
-                    agent_name=self.signature,
+                    agent_name=memory_agent,
                     market=market,
                     content=reflection,
                     source_date=date_str,
@@ -599,17 +603,17 @@ class BaseAgentAStock:
                 )
 
                 # Check if consolidation needed
-                if svc.should_consolidate_l1(self.signature, market):
-                    await consolidate_l1_to_l2(svc, self.signature, market)
-                if svc.should_consolidate_l2(self.signature, market):
-                    await consolidate_l2_to_l3(svc, self.signature, market)
+                if svc.should_consolidate_l1(memory_agent, market):
+                    await consolidate_l1_to_l2(svc, memory_agent, market)
+                if svc.should_consolidate_l2(memory_agent, market):
+                    await consolidate_l2_to_l3(svc, memory_agent, market)
 
                 logger.info("[%s] Reflection saved for %s", self.signature, date_str)
             finally:
                 conn.close()
 
         except Exception as e:
-            logger.debug("[%s] Reflection generation skipped: %s", self.signature, e)
+            logger.warning("[%s] Reflection generation failed: %s", self.signature, e)
 
     def register_agent(self) -> None:
         """Register new agent, create initial positions"""
