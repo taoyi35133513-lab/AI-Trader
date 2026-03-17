@@ -19,6 +19,7 @@ class SkillInfo(BaseModel):
     description: str
     icon: str
     has_tools: bool = False
+    builtin: bool = False
 
 
 class AgentSkillsRequest(BaseModel):
@@ -44,7 +45,8 @@ async def list_skills():
             category=s["category"],
             description=s["description"],
             icon=s["icon"],
-            has_tools=bool(s.get("tools_module")),
+            has_tools=bool(s.get("tools_module") or s.get("mcp_service_name")),
+            builtin=bool(s.get("builtin")),
         ))
 
     return {"skills": by_category, "total": len(all_skills)}

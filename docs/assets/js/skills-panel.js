@@ -17,6 +17,7 @@
     var agents = [];
 
     var CATEGORY_LABELS = {
+        builtin: { label: '核心工具', icon: '\uD83D\uDD27' },
         strategy: { label: '交易策略', icon: '\uD83C\uDFAF' },
         analysis: { label: '分析工具', icon: '\uD83D\uDD2C' },
         risk: { label: '风控管理', icon: '\uD83D\uDEE1\uFE0F' },
@@ -162,7 +163,7 @@
         while (body.firstChild) body.removeChild(body.firstChild);
 
         var activeIds = agentSkills[currentAgent] || [];
-        var categories = ['strategy', 'analysis', 'risk'];
+        var categories = ['builtin', 'strategy', 'analysis', 'risk'];
 
         categories.forEach(function (cat) {
             var skills = allSkills[cat];
@@ -181,9 +182,12 @@
             grid.className = 'skills-grid';
 
             skills.forEach(function (skill) {
-                var isActive = activeIds.indexOf(skill.id) !== -1;
+                var isBuiltin = skill.builtin === true;
+                var isActive = isBuiltin || activeIds.indexOf(skill.id) !== -1;
                 var card = document.createElement('div');
-                card.className = 'skill-card' + (isActive ? ' active' : '');
+                card.className = 'skill-card active' + (isBuiltin ? ' builtin' : '');
+
+                if (!isActive) card.className = 'skill-card';
 
                 var cardHeader = document.createElement('div');
                 cardHeader.className = 'skill-card-header';
@@ -210,7 +214,12 @@
                 var checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.checked = isActive;
-                checkbox.onchange = function () { toggleSkill(skill.id, checkbox.checked); };
+                if (isBuiltin) {
+                    checkbox.disabled = true;
+                    toggle.title = '核心技能，不可取消';
+                } else {
+                    checkbox.onchange = function () { toggleSkill(skill.id, checkbox.checked); };
+                }
                 var slider = document.createElement('span');
                 slider.className = 'skill-slider';
                 toggle.appendChild(checkbox);
@@ -284,6 +293,8 @@
             '.skill-slider:before{content:"";position:absolute;height:16px;width:16px;left:2px;bottom:2px;background:#fff;border-radius:50%;transition:.2s}',
             '.skill-toggle input:checked+.skill-slider{background:var(--accent-blue,#4a90d9)}',
             '.skill-toggle input:checked+.skill-slider:before{transform:translateX(16px)}',
+            '.skill-card.builtin{border-color:rgba(74,144,217,.3);background:rgba(74,144,217,.05)}',
+            '.skill-card.builtin .skill-slider{cursor:not-allowed;opacity:.6}',
         ].join('\n');
         document.head.appendChild(style);
         createPanel();

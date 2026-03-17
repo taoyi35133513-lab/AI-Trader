@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 SKILL_REGISTRY: Dict[str, dict] = {}
 
-_SUBDIRS = ["strategies", "analysis", "risk"]
+_SUBDIRS = ["builtin", "strategies", "analysis", "risk"]
 
 
 def discover_skills() -> Dict[str, dict]:
@@ -43,8 +43,8 @@ def discover_skills() -> Dict[str, dict]:
             try:
                 mod = importlib.import_module(full_name)
                 config = getattr(mod, "SKILL_CONFIG", None)
-                prompt = getattr(mod, "PROMPT", None)
-                if config and prompt:
+                prompt = getattr(mod, "PROMPT", "")
+                if config:
                     skill_id = config["id"]
                     SKILL_REGISTRY[skill_id] = {**config, "prompt": prompt}
                     logger.debug("Registered skill: %s (%s)", skill_id, config["name"])
