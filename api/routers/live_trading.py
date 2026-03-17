@@ -183,6 +183,37 @@ async def trigger_trading_session():
     )
 
 
+@router.post("/sync-prices")
+async def sync_prices(trade_date: str = None):
+    """
+    Manually sync price data for a given date into DuckDB.
+    Syncs daily prices, hourly prices, and SSE50 index.
+    Defaults to today if no date specified.
+    """
+    import asyncio
+    from datetime import datetime
+
+    if not trade_date:
+        trade_date = datetime.now().strftime("%Y-%m-%d")
+
+    results = {}
+    try:
+        from data.sync_prices_db import sync_daily_prices, sync_hourly_prices, update_sse50_index
+
+        daily = await asyncio.to_thread(sync_daily_prices, trade_date)
+        results["daily_prices"] = daily
+
+        hourly = await asyncio.to_thread(sync_hourly_prices, trade_date)
+        results["hourly_prices"] = hourly
+
+        idx = await asyncio.to_thread(update_sse50_index, trade_date)
+        results["sse50_index"] = idx
+
+        return {"success": True, "trade_date": trade_date, "results": results}
+    except Exception as e:
+        return {"success": False, "trade_date": trade_date, "error": str(e), "results": results}
+
+
 def _status_to_response(status) -> SchedulerStatusResponse:
     """Convert SchedulerStatus to SchedulerStatusResponse"""
     return SchedulerStatusResponse(

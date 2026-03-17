@@ -169,8 +169,37 @@ class PriceService:
         对于美股市场，需要从文件加载 QQQ 数据。
         """
         if market in ("cn", "cn_hour"):
-            # Load SSE 50 index data from JSON file
             project_root = Path(__file__).parent.parent.parent
+
+            # For hourly market, try hourly index file first
+            if market == "cn_hour":
+                hourly_file = project_root / "data" / "A_stock" / "index_hourly_sse_50.json"
+                if hourly_file.exists():
+                    try:
+                        with open(hourly_file, "r", encoding="utf-8") as f:
+                            hourly_data = json.load(f)
+                        time_series = hourly_data.get("Time Series (60min)", {})
+                        result = []
+                        for ts_str, values in time_series.items():
+                            day_part = ts_str.split(" ")[0]
+                            try:
+                                record_date = date.fromisoformat(day_part)
+                            except ValueError:
+                                continue
+                            if start_date and record_date < start_date:
+                                continue
+                            if end_date and record_date > end_date:
+                                continue
+                            close_val = values.get("4. close")
+                            if close_val is not None:
+                                result.append({"trade_date": ts_str, "close": float(close_val)})
+                        if result:
+                            result.sort(key=lambda x: x["trade_date"])
+                            return result
+                    except Exception as e:
+                        logger.debug("Hourly index load failed, falling back to daily: %s", e)
+
+            # Load SSE 50 daily index data from JSON file
             index_file = project_root / "data" / "A_stock" / "index_daily_sse_50.json"
 
             if not index_file.exists():

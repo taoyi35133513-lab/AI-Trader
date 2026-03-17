@@ -444,10 +444,25 @@ class SchedulerService:
                 sync_daily_prices,
                 sync_hourly_prices,
                 update_sse50_index,
+                update_sse50_hourly_index,
             )
 
             if frequency == "hourly":
                 await asyncio.to_thread(sync_hourly_prices, trade_date)
+                # Sync hourly SSE50 index for current time point
+                hour = now.hour
+                if hour == 10:
+                    time_key = f"{trade_date} 10:30:00"
+                elif hour == 11:
+                    time_key = f"{trade_date} 11:30:00"
+                elif hour == 14:
+                    time_key = f"{trade_date} 14:00:00"
+                elif hour == 15:
+                    time_key = f"{trade_date} 15:00:00"
+                else:
+                    time_key = None
+                if time_key:
+                    await asyncio.to_thread(update_sse50_hourly_index, trade_date, time_key)
                 # After last hourly session (15:05), also sync daily + index
                 if now.hour >= 15:
                     await asyncio.to_thread(sync_daily_prices, trade_date)

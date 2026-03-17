@@ -265,3 +265,70 @@ def update_sse50_index(trade_date: str) -> bool:
     except Exception as e:
         logger.error("update_sse50_index failed: %s", e)
         return False
+
+
+def update_sse50_hourly_index(trade_date: str, time_key: str = None) -> bool:
+    """
+    Fetch SSE 50 index realtime price and append to index_hourly_sse_50.json.
+
+    Uses ts.get_realtime_quotes('sh000016') for current price data.
+
+    Args:
+        trade_date: Date string "YYYY-MM-DD"
+        time_key: Hourly time key (e.g. "2026-03-17 10:30:00"). If None, uses all 4 candle times.
+
+    Returns:
+        True if updated successfully
+    """
+    import tushare as ts
+
+    index_file = PROJECT_ROOT / "data" / "A_stock" / "index_hourly_sse_50.json"
+
+    try:
+        # Get SSE 50 index realtime price
+        df = ts.get_realtime_quotes("sh000016")
+        if df is None or df.empty:
+            logger.warning("Cannot get SSE 50 realtime quote")
+            return False
+
+        row = df.iloc[0]
+        price_data = {
+            "1. open": str(row["open"]),
+            "2. high": str(row["high"]),
+            "3. low": str(row["low"]),
+            "4. close": str(row["price"]),
+            "5. volume": str(row["volume"]),
+        }
+
+        # Load or create the hourly index file
+        if index_file.exists():
+            with open(index_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            data = {
+                "Meta Data": {
+                    "1. Information": "SSE 50 Index Hourly",
+                    "2. Symbol": "000016.SH",
+                },
+                "Time Series (60min)": {},
+            }
+
+        ts_data = data.setdefault("Time Series (60min)", {})
+
+        if time_key:
+            ts_data[time_key] = price_data
+        else:
+            # Write all 4 hourly candle times for the given date
+            for t in ["10:30:00", "11:30:00", "14:00:00", "15:00:00"]:
+                key = f"{trade_date} {t}"
+                if key not in ts_data:
+                    ts_data[key] = price_data
+
+        with open(index_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+        logger.info("SSE 50 hourly index updated for %s: close=%s", time_key or trade_date, row["price"])
+        return True
+    except Exception as e:
+        logger.error("update_sse50_hourly_index failed: %s", e)
+        return False
