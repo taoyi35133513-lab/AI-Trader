@@ -69,11 +69,14 @@ def add_agent_skill(agent_name: str, market: str, skill_id: str):
     """Enable a single skill for an agent."""
     conn = duckdb.connect(str(get_database_path()), read_only=False)
     try:
+        init_skills_table(conn)
+        # Delete then insert to avoid ON CONFLICT syntax issues with DuckDB
         conn.execute(
-            """INSERT INTO agent_skills (agent_name, market, skill_id)
-               VALUES (?, ?, ?)
-               ON CONFLICT (agent_name, market, skill_id)
-               DO UPDATE SET enabled = TRUE, updated_at = CURRENT_TIMESTAMP""",
+            "DELETE FROM agent_skills WHERE agent_name = ? AND market = ? AND skill_id = ?",
+            [agent_name, market, skill_id],
+        )
+        conn.execute(
+            "INSERT INTO agent_skills (agent_name, market, skill_id) VALUES (?, ?, ?)",
             [agent_name, market, skill_id],
         )
     finally:
