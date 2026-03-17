@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 from api.config import settings, load_config_json
 from api.routers import agents, benchmarks, config, dashboard, prices, agent_control, live_trading, market_data, positions
-from api.routers import agent_logs, agent_positions, trade_comments, master_commentary, memory
+from api.routers import agent_logs, agent_positions, trade_comments, master_commentary, memory, skills
 from api.mcp_integration import get_mcp_apps, get_combined_lifespan
 
 
@@ -99,6 +99,10 @@ async def lifespan(app: FastAPI):
         # Initialize agent_memory table
         from api.services.memory_service import init_memory_table
         init_memory_table(_conn)
+
+        # Initialize agent_skills table
+        from api.services.skills_service import init_skills_table
+        init_skills_table(_conn)
 
         _conn.close()
     except Exception as e:
@@ -177,6 +181,7 @@ app.include_router(agent_positions.router, tags=["Agent Positions V2"])
 app.include_router(trade_comments.router, tags=["Trade Comments"])
 app.include_router(master_commentary.router, prefix="/api/master-commentary", tags=["Master Commentary"])
 app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
+app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
 
 # 挂载 MCP 服务
 # Each MCP service is mounted at /mcp/{service_name}/
@@ -184,6 +189,12 @@ app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
 mcp_apps = get_mcp_apps()
 for name, mcp_app in mcp_apps.items():
     app.mount(f"/mcp/{name}", mcp_app)
+
+# Mount skill-specific MCP services
+from api.mcp_integration import get_skill_mcp_apps
+skill_mcp_apps = get_skill_mcp_apps()
+for name, skill_app in skill_mcp_apps.items():
+    app.mount(f"/mcp/{name}", skill_app)
 
 
 @app.get("/")

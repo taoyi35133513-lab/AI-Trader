@@ -156,6 +156,7 @@ class BaseAgentAStock:
         initial_cash: float = 100000.0,  # 默认10万人民币
         init_date: str = "2025-10-09",
         market: str = "cn",  # 接受但忽略此参数，始终使用"cn"
+        skill_ids: Optional[List[str]] = None,
     ):
         """
         Initialize BaseAgentAStock
@@ -174,10 +175,12 @@ class BaseAgentAStock:
             initial_cash: Initial cash amount (default: 100000.0 RMB)
             init_date: Initialization date
             market: Market type (accepted for compatibility, but always uses "cn")
+            skill_ids: List of active skill IDs for this agent
         """
         self.signature = signature
         self.basemodel = basemodel
         self.market = "cn"  # 硬编码为A股市场
+        self.skill_ids = skill_ids or []
 
         # 默认使用上证50成分股
         if stock_symbols is None:
@@ -192,7 +195,7 @@ class BaseAgentAStock:
         self.init_date = init_date
 
         # Set MCP configuration
-        self.mcp_config = mcp_config or self._get_default_mcp_config()
+        self.mcp_config = mcp_config or self._get_mcp_config_with_skills()
 
         # Set log path - A股专用路径
         self.base_log_path = log_path or "./data/agent_data_astock"
@@ -220,6 +223,25 @@ class BaseAgentAStock:
         # DuckDB session tracking
         self._current_session_id: Optional[int] = None
         self._current_session_timestamp: Optional[datetime] = None
+
+    def _get_mcp_config_with_skills(self) -> Dict[str, Dict[str, Any]]:
+        """Get MCP config including skill-specific MCP services."""
+        config = self._get_default_mcp_config()
+        if self.skill_ids:
+            try:
+                from skills import get_skill
+                unified_url = os.getenv("UNIFIED_BACKEND_URL", "http://localhost:8888")
+                for sid in self.skill_ids:
+                    skill = get_skill(sid)
+                    if skill and skill.get("mcp_service_name"):
+                        svc_name = skill["mcp_service_name"]
+                        config[svc_name] = {
+                            "transport": "streamable_http",
+                            "url": f"{unified_url}/mcp/{svc_name}/mcp",
+                        }
+            except Exception as e:
+                logger.warning("Failed to load skill MCP config: %s", e)
+        return config
 
     def _get_default_mcp_config(self) -> Dict[str, Dict[str, Any]]:
         """Get default MCP configuration
@@ -431,7 +453,7 @@ class BaseAgentAStock:
         log_file = self._setup_logging(today_date)
 
         # Update system prompt - 使用A股专用提示词
-        self._current_system_prompt = get_agent_system_prompt_astock(today_date, self.signature, self.stock_symbols)
+        self._current_system_prompt = get_agent_system_prompt_astock(today_date, self.signature, self.stock_symbols, skill_ids=self.skill_ids or None)
         self.agent = create_agent(
             self.model,
             tools=self.tools,

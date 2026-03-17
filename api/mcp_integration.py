@@ -52,6 +52,31 @@ def get_mcp_apps() -> Dict[str, Any]:
     return _mcp_apps
 
 
+def get_skill_mcp_apps() -> Dict[str, Any]:
+    """Get ASGI apps for skill-specific MCP services.
+
+    Discovers skills with tools_module and mcp_service_name,
+    imports their FastMCP instances, and creates ASGI apps.
+    """
+    import importlib
+    from skills import discover_skills
+
+    apps = {}
+    registry = discover_skills()
+    for skill_id, skill in registry.items():
+        tools_module = skill.get("tools_module")
+        svc_name = skill.get("mcp_service_name")
+        if tools_module and svc_name:
+            try:
+                mod = importlib.import_module(tools_module)
+                mcp_instance = getattr(mod, "mcp")
+                apps[svc_name] = mcp_instance.http_app(path="/mcp")
+                logger.info("Mounted skill MCP: /mcp/%s/mcp (%s)", svc_name, skill_id)
+            except Exception as e:
+                logger.warning("Failed to mount skill MCP %s: %s", skill_id, e)
+    return apps
+
+
 def combine_lifespans(*lifespans: Callable):
     """
     Combine multiple lifespan context managers into one.

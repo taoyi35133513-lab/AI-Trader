@@ -530,6 +530,15 @@ class SchedulerService:
         module = importlib.import_module(info["module"])
         AgentClass = getattr(module, info["class"])
 
+        # Load skills for this agent
+        from api.services.skills_service import get_agent_skills
+        memory_agent = signature.replace("-live", "")
+        skill_ids = get_agent_skills(memory_agent, market)
+        if not skill_ids:
+            skill_ids = model_config.get("skills", []) or []
+        if skill_ids:
+            logger.info("Agent %s loaded skills: %s", signature, skill_ids)
+
         # Create agent instance
         agent = AgentClass(
             signature=signature,
@@ -543,6 +552,7 @@ class SchedulerService:
             init_date=today_date,
             openai_base_url=openai_base_url,
             openai_api_key=openai_api_key,
+            skill_ids=skill_ids,
         )
 
         # Initialize agent (MCP tools, LLM)
