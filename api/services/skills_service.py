@@ -4,7 +4,8 @@
 """
 
 import logging
-from typing import List, Optional
+from contextlib import contextmanager
+from typing import List
 
 import duckdb
 
@@ -27,17 +28,26 @@ def init_skills_table(conn: duckdb.DuckDBPyConnection):
     """)
 
 
+@contextmanager
+def _get_conn():
+    """Context manager for DuckDB connection with auto-close."""
+    conn = duckdb.connect(str(get_database_path()), read_only=False)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 def get_agent_skills(agent_name: str, market: str = "cn") -> List[str]:
     """Get active skill IDs for an agent."""
     try:
-        conn = duckdb.connect(str(get_database_path()), read_only=False)
-        init_skills_table(conn)
-        rows = conn.execute(
-            "SELECT skill_id FROM agent_skills WHERE agent_name = ? AND market = ? AND enabled = TRUE",
-            [agent_name, market],
-        ).fetchall()
-        conn.close()
-        return [r[0] for r in rows]
+        with _get_conn() as conn:
+            init_skills_table(conn)
+            rows = conn.execute(
+                "SELECT skill_id FROM agent_skills WHERE agent_name = ? AND market = ? AND enabled = TRUE",
+                [agent_name, market],
+            ).fetchall()
+            return [r[0] for r in rows]
     except Exception as e:
         logger.debug("get_agent_skills failed: %s", e)
         return []
@@ -45,8 +55,7 @@ def get_agent_skills(agent_name: str, market: str = "cn") -> List[str]:
 
 def set_agent_skills(agent_name: str, market: str, skill_ids: List[str]):
     """Set active skills for an agent (replaces all existing)."""
-    conn = duckdb.connect(str(get_database_path()), read_only=False)
-    try:
+    with _get_conn() as conn:
         init_skills_table(conn)
         conn.execute(
             "DELETE FROM agent_skills WHERE agent_name = ? AND market = ?",
@@ -58,19 +67,12 @@ def set_agent_skills(agent_name: str, market: str, skill_ids: List[str]):
                 [agent_name, market, sid],
             )
         logger.info("Set %d skills for %s (%s): %s", len(skill_ids), agent_name, market, skill_ids)
-    except Exception as e:
-        logger.error("Failed to set agent skills for %s: %s", agent_name, e)
-        raise
-    finally:
-        conn.close()
 
 
 def add_agent_skill(agent_name: str, market: str, skill_id: str):
     """Enable a single skill for an agent."""
-    conn = duckdb.connect(str(get_database_path()), read_only=False)
-    try:
+    with _get_conn() as conn:
         init_skills_table(conn)
-        # Delete then insert to avoid ON CONFLICT syntax issues with DuckDB
         conn.execute(
             "DELETE FROM agent_skills WHERE agent_name = ? AND market = ? AND skill_id = ?",
             [agent_name, market, skill_id],
@@ -79,17 +81,12 @@ def add_agent_skill(agent_name: str, market: str, skill_id: str):
             "INSERT INTO agent_skills (agent_name, market, skill_id) VALUES (?, ?, ?)",
             [agent_name, market, skill_id],
         )
-    finally:
-        conn.close()
 
 
 def remove_agent_skill(agent_name: str, market: str, skill_id: str):
     """Disable a skill for an agent."""
-    conn = duckdb.connect(str(get_database_path()), read_only=False)
-    try:
+    with _get_conn() as conn:
         conn.execute(
             "DELETE FROM agent_skills WHERE agent_name = ? AND market = ? AND skill_id = ?",
             [agent_name, market, skill_id],
         )
-    finally:
-        conn.close()

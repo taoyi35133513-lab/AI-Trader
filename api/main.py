@@ -104,6 +104,10 @@ async def lifespan(app: FastAPI):
         from api.services.skills_service import init_skills_table
         init_skills_table(_conn)
 
+        # Pre-populate skills registry at startup
+        from skills import discover_skills
+        discover_skills()
+
         _conn.close()
     except Exception as e:
         logger.debug("DB migration check: %s", e)
