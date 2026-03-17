@@ -76,8 +76,9 @@ class RealtimeDataFetcher:
         """
         获取 A 股实时价格
 
-        优先使用 rt_min(freq='60MIN') 获取实时数据（盘中可用）；
-        若 rt_min 失败，回退到 daily（仅收盘后有数据）。
+        优先使用 ts.get_realtime_quotes()（无配额限制，盘中实时）；
+        回退到 pro.rt_min（每天 10 次限制）；
+        最终回退到 pro.daily（仅收盘后有数据）。
 
         Args:
             symbols: 股票代码列表 (如 ['600519.SH', '000001.SZ'])
@@ -88,48 +89,49 @@ class RealtimeDataFetcher:
         prices = {}
 
         try:
-            from tools.tushare_client import get_tushare_pro
+            import tushare as ts
 
-            pro = get_tushare_pro()
-            ts_codes = ",".join(symbols)
+            # 方案1: ts.get_realtime_quotes() — 无配额限制，实时数据
+            codes = [s.split(".")[0] for s in symbols]
+            code_to_symbol = {s.split(".")[0]: s for s in symbols}
 
-            # 优先 rt_min: 盘中实时数据，批量获取所有股票
-            df = None
             try:
-                logger.info("正在通过 tushare rt_min 获取实时行情 (%s)...", self.frequency)
-                df = pro.rt_min(ts_code=ts_codes, freq="60MIN")
-            except Exception as e:
-                logger.warning("rt_min 失败: %s", e)
-
-            if df is not None and not df.empty:
-                for _, row in df.iterrows():
-                    sym = row["ts_code"]
-                    try:
-                        prices[sym] = {
-                            "open": float(row["open"]),
-                            "high": float(row["high"]),
-                            "low": float(row["low"]),
-                            "close": float(row["close"]),
-                            "volume": int(float(row["vol"])),
-                        }
-                    except Exception as e:
-                        logger.warning("获取 %s 价格失败: %s", sym, e)
-            else:
-                # 回退 daily: 仅收盘后有数据
-                today = datetime.now().strftime("%Y%m%d")
-                logger.info("rt_min 无数据，回退 tushare daily (trade_date=%s)...", today)
-                try:
-                    df = pro.daily(trade_date=today)
-                except Exception as e:
-                    logger.warning("daily 失败: %s", e)
-                    df = None
+                logger.info("正在通过 tushare get_realtime_quotes 获取实时行情...")
+                df = ts.get_realtime_quotes(codes)
 
                 if df is not None and not df.empty:
-                    symbol_set = set(symbols)
-                    df_filtered = df[df["ts_code"].isin(symbol_set)]
-                    for _, row in df_filtered.iterrows():
-                        sym = row["ts_code"]
+                    for _, row in df.iterrows():
+                        code = row["code"]
+                        sym = code_to_symbol.get(code)
+                        if not sym:
+                            continue
                         try:
+                            price_val = float(row["price"]) if row["price"] and row["price"] != "0.000" else 0
+                            if price_val <= 0:
+                                continue
+                            prices[sym] = {
+                                "open": float(row["open"]) if row["open"] else price_val,
+                                "high": float(row["high"]) if row["high"] else price_val,
+                                "low": float(row["low"]) if row["low"] else price_val,
+                                "close": price_val,
+                                "volume": int(float(row["volume"])) if row["volume"] else 0,
+                            }
+                        except (ValueError, TypeError) as e:
+                            logger.warning("获取 %s 价格失败: %s", sym, e)
+            except Exception as e:
+                logger.warning("get_realtime_quotes 失败: %s", e)
+
+            # 方案2: pro.rt_min (每天 10 次限制)
+            if not prices:
+                from tools.tushare_client import get_tushare_pro
+                pro = get_tushare_pro()
+                try:
+                    logger.info("回退到 tushare rt_min...")
+                    ts_codes = ",".join(symbols)
+                    df = pro.rt_min(ts_code=ts_codes, freq="60MIN")
+                    if df is not None and not df.empty:
+                        for _, row in df.iterrows():
+                            sym = row["ts_code"]
                             prices[sym] = {
                                 "open": float(row["open"]),
                                 "high": float(row["high"]),
@@ -137,8 +139,29 @@ class RealtimeDataFetcher:
                                 "close": float(row["close"]),
                                 "volume": int(float(row["vol"])),
                             }
-                        except Exception as e:
-                            logger.warning("获取 %s 价格失败: %s", sym, e)
+                except Exception as e:
+                    logger.warning("rt_min 失败: %s", e)
+
+            # 方案3: pro.daily (仅收盘后)
+            if not prices:
+                from tools.tushare_client import get_tushare_pro
+                pro = get_tushare_pro()
+                today = datetime.now().strftime("%Y%m%d")
+                logger.info("回退到 tushare daily (trade_date=%s)...", today)
+                try:
+                    df = pro.daily(trade_date=today)
+                    if df is not None and not df.empty:
+                        symbol_set = set(symbols)
+                        for _, row in df[df["ts_code"].isin(symbol_set)].iterrows():
+                            prices[row["ts_code"]] = {
+                                "open": float(row["open"]),
+                                "high": float(row["high"]),
+                                "low": float(row["low"]),
+                                "close": float(row["close"]),
+                                "volume": int(float(row["vol"])),
+                            }
+                except Exception as e:
+                    logger.warning("daily 失败: %s", e)
 
             logger.info("成功获取 %d/%d 只股票价格", len(prices), len(symbols))
 
