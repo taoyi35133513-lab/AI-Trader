@@ -130,7 +130,7 @@ async def consolidate_l2_to_l3(memory_service: MemoryService, agent_name: str, m
         [agent_name, market, LEVEL_LESSON],
     ).fetchall()
 
-    if len(all_lessons) < 2:
+    if len(all_lessons) < 1:
         return
 
     lesson_text = "\n".join([r[1] for r in all_lessons])
