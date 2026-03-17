@@ -10,8 +10,11 @@ Architecture:
 - Client agents connect to unified backend URL instead of separate ports
 """
 
+import logging
 import sys
 from contextlib import asynccontextmanager
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 

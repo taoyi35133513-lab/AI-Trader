@@ -94,7 +94,7 @@ def calculate_macd(symbol: str, date: str) -> str:
         symbol: 股票代码，如 600519.SH
         date: 日期，如 2026-03-17
     """
-    prices = _get_close_prices(symbol, date, 60)
+    prices = _get_close_prices(symbol, date, 120)
 
     if len(prices) < 26:
         return json.dumps({"error": f"Insufficient data for MACD ({len(prices)} < 26 days)"})

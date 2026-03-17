@@ -30,7 +30,8 @@ def init_skills_table(conn: duckdb.DuckDBPyConnection):
 def get_agent_skills(agent_name: str, market: str = "cn") -> List[str]:
     """Get active skill IDs for an agent."""
     try:
-        conn = duckdb.connect(str(get_database_path()), read_only=True)
+        conn = duckdb.connect(str(get_database_path()), read_only=False)
+        init_skills_table(conn)
         rows = conn.execute(
             "SELECT skill_id FROM agent_skills WHERE agent_name = ? AND market = ? AND enabled = TRUE",
             [agent_name, market],
@@ -46,18 +47,20 @@ def set_agent_skills(agent_name: str, market: str, skill_ids: List[str]):
     """Set active skills for an agent (replaces all existing)."""
     conn = duckdb.connect(str(get_database_path()), read_only=False)
     try:
-        # Remove all existing skills for this agent+market
+        init_skills_table(conn)
         conn.execute(
             "DELETE FROM agent_skills WHERE agent_name = ? AND market = ?",
             [agent_name, market],
         )
-        # Insert new skills
         for sid in skill_ids:
             conn.execute(
                 "INSERT INTO agent_skills (agent_name, market, skill_id) VALUES (?, ?, ?)",
                 [agent_name, market, sid],
             )
         logger.info("Set %d skills for %s (%s): %s", len(skill_ids), agent_name, market, skill_ids)
+    except Exception as e:
+        logger.error("Failed to set agent skills for %s: %s", agent_name, e)
+        raise
     finally:
         conn.close()
 
