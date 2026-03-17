@@ -163,21 +163,32 @@ def sync_daily_prices(trade_date: str) -> int:
 
     ts_date = trade_date.replace("-", "")
     symbols = _get_sse50_symbols()
+    symbol_set = set(symbols)
 
-    # Batch fetch: tushare daily supports trade_date param for all stocks
+    # Try daily first (works after market close)
+    df = None
     try:
         df = pro.daily(trade_date=ts_date)
     except Exception as e:
-        logger.error("sync_daily_prices batch fetch failed: %s", e)
-        conn.close()
-        return 0
+        logger.warning("sync_daily_prices daily() failed: %s", e)
+
+    # Fallback to rt_min during trading hours
+    if df is None or df.empty:
+        try:
+            ts_codes = ",".join(symbols)
+            rt_df = pro.rt_min(ts_code=ts_codes, freq="60MIN")
+            if rt_df is not None and not rt_df.empty:
+                # Filter to today's data only
+                rt_df = rt_df[rt_df["time"].str.startswith(trade_date)]
+                if not rt_df.empty:
+                    df = rt_df.rename(columns={"time": "trade_time"})
+        except Exception as e:
+            logger.warning("sync_daily_prices rt_min fallback failed: %s", e)
 
     if df is None or df.empty:
         conn.close()
         logger.info("sync_daily_prices: no data for %s", trade_date)
         return 0
-
-    symbol_set = set(symbols)
     df_filtered = df[df["ts_code"].isin(symbol_set)]
 
     count = 0
