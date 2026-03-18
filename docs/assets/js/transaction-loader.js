@@ -95,7 +95,7 @@ class TransactionLoader {
     // Internal: parse a single position.jsonl file
     async _loadEntriesFromPath(agentFolder, positionPath) {
         try {
-            const response = await fetch(positionPath);
+            const response = await fetch(positionPath + '?t=' + Date.now());
             if (!response.ok) return [];
 
             const text = await response.text();
@@ -128,8 +128,9 @@ class TransactionLoader {
             const agentDataDir = marketConfig ? marketConfig.data_dir : 'agent_data';
             // Sanitize date for Windows compatibility (replace : with -)
             const safeDate = date.replace(/:/g, '-');
+            const cacheBust = '?t=' + Date.now();
             const logPath = `data/${agentDataDir}/${agentFolder}/log/${safeDate}/log.jsonl`;
-            let response = await fetch(logPath);
+            let response = await fetch(logPath + cacheBust);
 
             // Fallback: try the corresponding -live folder
             if (!response.ok) {
@@ -142,7 +143,7 @@ class TransactionLoader {
                     liveFolder = `${agentFolder}-live`;
                 }
                 const livePath = `data/${agentDataDir}/${liveFolder}/log/${safeDate}/log.jsonl`;
-                response = await fetch(livePath);
+                response = await fetch(livePath + cacheBust);
             }
 
             // If log file doesn't exist in either location, return null
