@@ -180,17 +180,28 @@ class AgentService:
             )
             if positions:
                 logger.debug(f"DuckDB: Retrieved {len(positions)} positions for {agent_name}")
-                return positions
         except Exception as e:
             logger.warning(f"DuckDB position query failed: {e}")
+            positions = []
 
-        # 降级到 JSONL 文件
-        positions = self._get_positions_from_jsonl(agent_name, market, start_date, end_date)
+        # 降级到 JSONL 文件（如果 DuckDB 无数据）
+        if not positions:
+            positions = self._get_positions_from_jsonl(agent_name, market, start_date, end_date)
 
         # 合并 live agent 数据（如果存在）
         # 只取 backtest 最后日期之后的 live 记录，避免初始化记录导致的重叠和资产值跳变
         live_name = self._get_live_agent_name(agent_name, market)
-        live_positions = self._get_positions_from_jsonl(live_name, market, start_date, end_date)
+        # Try DuckDB first for live positions, fallback to JSONL
+        live_positions = []
+        try:
+            live_positions = self._position_service.get_positions_by_agent(
+                agent_name=live_name, market=market, start_date=start_date, end_date=end_date,
+            )
+        except Exception:
+            pass
+        if not live_positions:
+            live_positions = self._get_positions_from_jsonl(live_name, market, start_date, end_date)
+
         if live_positions and positions:
             last_backtest_date = max(p.get("date", "") for p in positions)
             live_positions = [p for p in live_positions if p.get("date", "") > last_backtest_date]
