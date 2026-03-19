@@ -42,7 +42,6 @@ def get_agent_skills(agent_name: str, market: str = "cn") -> List[str]:
     """Get active skill IDs for an agent."""
     try:
         with _get_conn() as conn:
-            init_skills_table(conn)
             rows = conn.execute(
                 "SELECT skill_id FROM agent_skills WHERE agent_name = ? AND market = ? AND enabled = TRUE",
                 [agent_name, market],

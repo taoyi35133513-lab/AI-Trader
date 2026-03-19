@@ -17,12 +17,18 @@ mcp = FastMCP("SkillTA")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
+# Per-symbol cache: {symbol: {date: close_price}}
+_price_cache: dict = {}
 
-def _get_close_prices(symbol: str, end_date: str, count: int = 60) -> List[float]:
-    """Get recent close prices from merged.jsonl for a symbol."""
+
+def _load_symbol_prices(symbol: str) -> dict:
+    """Load all daily prices for a symbol into cache. Returns {date: close}."""
+    if symbol in _price_cache:
+        return _price_cache[symbol]
+
     merged_file = PROJECT_ROOT / "data" / "A_stock" / "merged.jsonl"
     if not merged_file.exists():
-        return []
+        return {}
 
     with open(merged_file, "r", encoding="utf-8") as f:
         for line in f:
@@ -30,23 +36,28 @@ def _get_close_prices(symbol: str, end_date: str, count: int = 60) -> List[float
                 data = json.loads(line)
                 if data.get("Meta Data", {}).get("2. Symbol") != symbol:
                     continue
-
                 ts = data.get("Time Series (Daily)", {})
-                # Sort dates descending, filter <= end_date
-                dates = sorted(
-                    [d for d in ts.keys() if d <= end_date],
-                    reverse=True,
-                )[:count]
-
-                prices = []
-                for d in reversed(dates):
-                    close = ts[d].get("4. sell price") or ts[d].get("4. close")
+                prices = {}
+                for d, vals in ts.items():
+                    close = vals.get("4. sell price") or vals.get("4. close")
                     if close:
-                        prices.append(float(close))
+                        prices[d] = float(close)
+                _price_cache[symbol] = prices
                 return prices
             except (json.JSONDecodeError, KeyError, ValueError):
                 continue
-    return []
+    _price_cache[symbol] = {}
+    return {}
+
+
+def _get_close_prices(symbol: str, end_date: str, count: int = 60) -> List[float]:
+    """Get recent close prices for a symbol up to end_date."""
+    all_prices = _load_symbol_prices(symbol)
+    if not all_prices:
+        return []
+
+    dates = sorted([d for d in all_prices if d <= end_date], reverse=True)[:count]
+    return [all_prices[d] for d in reversed(dates)]
 
 
 @mcp.tool()

@@ -55,16 +55,23 @@ def get_mcp_apps() -> Dict[str, Any]:
     return _mcp_apps
 
 
+_skill_mcp_apps: Optional[Dict[str, Any]] = None
+
+
 def get_skill_mcp_apps() -> Dict[str, Any]:
-    """Get ASGI apps for skill-specific MCP services.
+    """Get ASGI apps for skill-specific MCP services (cached singleton).
 
     Discovers skills with tools_module and mcp_service_name,
     imports their FastMCP instances, and creates ASGI apps.
     """
+    global _skill_mcp_apps
+    if _skill_mcp_apps is not None:
+        return _skill_mcp_apps
+
     import importlib
     from skills import discover_skills
 
-    apps = {}
+    _skill_mcp_apps = {}
     registry = discover_skills()
     for skill_id, skill in registry.items():
         tools_module = skill.get("tools_module")
@@ -72,12 +79,14 @@ def get_skill_mcp_apps() -> Dict[str, Any]:
         if tools_module and svc_name:
             try:
                 mod = importlib.import_module(tools_module)
-                mcp_instance = getattr(mod, "mcp")
-                apps[svc_name] = mcp_instance.http_app(path="/mcp")
+                if not hasattr(mod, "mcp"):
+                    logger.warning("Skill %s tools module %s missing 'mcp' instance", skill_id, tools_module)
+                    continue
+                _skill_mcp_apps[svc_name] = mod.mcp.http_app(path="/mcp")
                 logger.info("Mounted skill MCP: /mcp/%s/mcp (%s)", svc_name, skill_id)
             except Exception as e:
                 logger.warning("Failed to mount skill MCP %s: %s", skill_id, e)
-    return apps
+    return _skill_mcp_apps
 
 
 def combine_lifespans(*lifespans: Callable):

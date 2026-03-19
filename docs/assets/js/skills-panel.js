@@ -76,12 +76,12 @@
         document.body.appendChild(panel);
     }
 
-    function openPanel() {
+    async function openPanel() {
         panelOpen = true;
         document.getElementById('skillsPanel').classList.add('open');
         document.querySelector('.skills-fab').classList.add('active');
-        loadAgents();
-        loadSkills();
+        await loadSkills();
+        await loadAgents();  // calls loadAgentSkills → renderSkills once
     }
 
     function closePanel() {
@@ -141,7 +141,6 @@
         } catch (e) {
             allSkills = {};
         }
-        renderSkills();
     }
 
     async function loadAgentSkills() {
