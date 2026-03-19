@@ -96,7 +96,9 @@ class PriceDataAccess:
                     else:
                         result = dq.query_daily_open_prices(db, symbols, today_date, self.market)
 
-                    if result:
+                    # Check if any actual price was found (not all None)
+                    has_real_data = result and any(v is not None for v in result.values())
+                    if has_real_data:
                         logger.debug(f"DuckDB: Retrieved {len(result)} open prices for {today_date}")
                         return result
                     else:
