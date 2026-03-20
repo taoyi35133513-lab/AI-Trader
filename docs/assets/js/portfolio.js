@@ -1,6 +1,15 @@
 // Portfolio Analysis Page
 // Detailed view of individual agent portfolios
 
+function _buildStockUrl(symbol) {
+    if (!symbol || !symbol.includes('.')) return null;
+    var parts = symbol.split('.');
+    var code = parts[0], suffix = parts[1];
+    var exchange = suffix === 'SH' ? 'SHA' : suffix === 'SZ' ? 'SHE' : null;
+    if (!exchange) return null;
+    return 'https://www.google.com/finance/quote/' + code + ':' + exchange;
+}
+
 const dataLoader = new DataLoader();
 let allAgentsData = {};
 let currentAgent = null;
@@ -320,13 +329,43 @@ function renderHoldingsTable(holdingsData, totalValue) {
         const weight = (holding.marketValue / totalValue * 100).toFixed(2);
         const name = stockNameMap[holding.symbol] || '';
         const row = document.createElement('tr');
-        row.innerHTML = `
-            <td class="symbol">${holding.symbol}${name ? ' <span style="color: var(--text-muted); font-size: 0.85em;">' + name + '</span>' : ''}</td>
-            <td>${holding.shares}</td>
-            <td>${dataLoader.formatCurrency(holding.price || 0)}</td>
-            <td>${dataLoader.formatCurrency(holding.marketValue)}</td>
-            <td>${weight}%</td>
-        `;
+
+        // Symbol cell with Google Finance link
+        const symbolCell = document.createElement('td');
+        symbolCell.className = 'symbol';
+        const stockUrl = _buildStockUrl(holding.symbol);
+        if (stockUrl) {
+            const link = document.createElement('a');
+            link.href = stockUrl;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.textContent = holding.symbol;
+            link.style.cssText = 'color:var(--accent-blue);text-decoration:none';
+            symbolCell.appendChild(link);
+        } else {
+            symbolCell.textContent = holding.symbol;
+        }
+        if (name) {
+            const nameSpan = document.createElement('span');
+            nameSpan.style.cssText = 'color:var(--text-muted);font-size:0.85em;margin-left:4px';
+            nameSpan.textContent = name;
+            symbolCell.appendChild(nameSpan);
+        }
+        row.appendChild(symbolCell);
+
+        // Remaining cells
+        var cells = [
+            holding.shares,
+            dataLoader.formatCurrency(holding.price || 0),
+            dataLoader.formatCurrency(holding.marketValue),
+            weight + '%'
+        ];
+        cells.forEach(function(val) {
+            var td = document.createElement('td');
+            td.textContent = val;
+            row.appendChild(td);
+        });
+
         tableBody.appendChild(row);
     });
 

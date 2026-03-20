@@ -1147,9 +1147,9 @@ function groupTransactions(entries) {
 function buildStockUrl(symbol) {
     if (!symbol || !symbol.includes('.')) return null;
     const [code, suffix] = symbol.split('.');
-    const exchange = suffix === 'SH' ? 'sh' : suffix === 'SZ' ? 'sz' : null;
+    const exchange = suffix === 'SH' ? 'SHA' : suffix === 'SZ' ? 'SHE' : null;
     if (!exchange) return null;
-    return `https://stockapp.finance.qq.com/mstats/#/detail/${exchange}/${code}`;
+    return `https://www.google.com/finance/quote/${code}:${exchange}`;
 }
 
 // Apply filters and refresh the action list
