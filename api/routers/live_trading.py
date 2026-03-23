@@ -203,6 +203,12 @@ async def sync_prices(trade_date: str = None):
         daily = await asyncio.to_thread(sync_daily_prices, trade_date)
         results["daily_prices"] = daily
 
+        # If tushare daily() returned 0, fallback to realtime quotes
+        if daily == 0:
+            daily_rt = await asyncio.to_thread(_sync_daily_from_realtime, trade_date)
+            results["daily_prices"] = daily_rt
+            results["daily_source"] = "realtime_quotes"
+
         hourly = await asyncio.to_thread(sync_hourly_prices, trade_date)
         results["hourly_prices"] = hourly
 
@@ -212,6 +218,53 @@ async def sync_prices(trade_date: str = None):
         return {"success": True, "trade_date": trade_date, "results": results}
     except Exception as e:
         return {"success": False, "trade_date": trade_date, "error": str(e), "results": results}
+
+
+def _sync_daily_from_realtime(trade_date: str) -> int:
+    """Fallback: sync daily prices from ts.get_realtime_quotes when tushare daily() has no data."""
+    import json
+    from pathlib import Path
+    import duckdb
+    from api.config import get_database_path
+
+    try:
+        import tushare as ts
+
+        project_root = Path(__file__).parent.parent.parent
+        merged = project_root / "data" / "A_stock" / "merged.jsonl"
+        symbols = []
+        with open(merged) as f:
+            for line in f:
+                sym = json.loads(line).get("Meta Data", {}).get("2. Symbol", "")
+                if sym:
+                    symbols.append(sym)
+
+        codes = [s.split(".")[0] for s in symbols]
+        code_to_sym = {s.split(".")[0]: s for s in symbols}
+
+        df = ts.get_realtime_quotes(codes)
+        if df is None or df.empty:
+            return 0
+
+        db = duckdb.connect(str(get_database_path()))
+        db.execute("DELETE FROM stock_daily_prices WHERE trade_date = ?", [trade_date])
+        count = 0
+        for _, row in df.iterrows():
+            sym = code_to_sym.get(row["code"])
+            if not sym:
+                continue
+            price = float(row["price"]) if row["price"] and row["price"] != "0.000" else 0
+            if price <= 0:
+                continue
+            db.execute(
+                "INSERT INTO stock_daily_prices (ts_code, trade_date, open, high, low, close, volume, market) VALUES (?,?,?,?,?,?,?,?)",
+                [sym, trade_date, float(row["open"]), float(row["high"]), float(row["low"]), price, int(float(row["volume"])), "cn"],
+            )
+            count += 1
+        db.close()
+        return count
+    except Exception:
+        return 0
 
 
 def _status_to_response(status) -> SchedulerStatusResponse:

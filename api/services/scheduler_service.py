@@ -223,6 +223,7 @@ class SchedulerService:
             id="live_trading_daily",
             name="Live Trading (Daily)",
             replace_existing=True,
+            misfire_grace_time=300,  # Allow 5 min delay before skipping
             kwargs={"frequency_override": "daily"},
         )
         logger.info("SchedulerService added daily job: %02d:%02d (Mon-Fri)", hour, minute)
@@ -242,6 +243,7 @@ class SchedulerService:
                 id=job_id,
                 name=f"Live Trading ({hour:02d}:{minute:02d})",
                 replace_existing=True,
+                misfire_grace_time=300,  # Allow 5 min delay before skipping
                 kwargs={"frequency_override": "hourly"},
             )
 
