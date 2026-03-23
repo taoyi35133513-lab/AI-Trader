@@ -38,7 +38,7 @@ def gather_context(agent_name: str, market: str = "cn", days: int = 30) -> str:
     from api.services.price_service import PriceService
 
     db_path = get_database_path()
-    conn = duckdb.connect(str(db_path), read_only=True)
+    conn = duckdb.connect(str(db_path), read_only=False)
     try:
         agent_service = AgentService(conn)
         price_service = PriceService(conn)
