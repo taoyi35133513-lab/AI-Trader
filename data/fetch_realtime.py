@@ -258,14 +258,15 @@ class RealtimeDataFetcher:
             # 小时频：对齐到交易时间点
             hour = now.hour
             if self.market == "cn":
-                # A股交易时段对齐
-                if 9 <= hour < 11:
+                # A股交易时段对齐（调度器在 K 线结束后 5 分钟触发）
+                # 10:35 → 10:30, 11:35 → 11:30, 14:05 → 14:00, 15:05 → 15:00
+                if hour == 10:
                     aligned = "10:30:00"
-                elif 11 <= hour < 13:
+                elif hour == 11:
                     aligned = "11:30:00"
-                elif 13 <= hour < 14:
+                elif hour == 14:
                     aligned = "14:00:00"
-                elif 14 <= hour < 16:
+                elif hour == 15:
                     aligned = "15:00:00"
                 else:
                     aligned = f"{hour:02d}:00:00"
